@@ -1,0 +1,6 @@
+﻿name,time,application,num_replicas,requested_gpu,batch_size,duration,num_task
+cifar10-0,107,cifar10,6,100,2048,4,-1
+deepspeech2-1,110,deepspeech2,6,100,320,4,-1
+ncf-2,135,ncf,1,100,32768,4,-1
+deepspeech2-3,262,deepspeech2,12,100,640,4,-1
+cifar10-4,356,cifar10,16,100,4096,4,-1
