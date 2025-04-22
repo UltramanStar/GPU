@@ -26,24 +26,26 @@ class GPU:
         return self.available_space >= requested_gpu
 
     def allocate(self, job: 'Job', requested_gpu: int):
+
         self.available_space -= requested_gpu
         self.running_jobs.append(job)
-        if self.is_inference:
-            self.state = "RUNNING"
+        # if self.is_inference:
+        #     self.state = "RUNNING"
 
     def deallocate(self, job: 'Job', requested_gpu: int):
+        print("原运行任务列表：",self.running_jobs)
         self.available_space += requested_gpu
         self.running_jobs.remove(job)
         if not job.is_inference:
-            print("训练任务释放资源，剩余任务：",self.running_jobs)
+            print(f"训练任务释放GPU{self.gpu_id}资源：{self.running_jobs}，可用资源{self.available_space}%")#TODO：目前存在一个GPU多次分配同一个任务的情况
         if self.is_inference and not self.running_jobs:
             self.state = "PROTECT"
             self.protect_start_time = 0  # 这个值会在Cluster类中设置
 
 class JobInfo:
     """用于策略优化的任务信息类"""
-    def __init__(self, name: str, submit_time: int, application, num_replicas: int,
-                 requested_gpu: int, batch_size: int, duration: int, num_task: int,
+    def __init__(self, name, submit_time, application, num_replicas,
+                 requested_gpu: int, batch_size: int, duration: int,
                  is_inference: bool, node_gpu_distribution: List[int], placement: List[int],end_time):
         self.name = name
         self.submit_time = submit_time
@@ -52,7 +54,6 @@ class JobInfo:
         self.requested_gpu = requested_gpu
         self.batch_size = batch_size
         self.duration = duration
-        self.num_task = num_task
         self.is_inference = is_inference
         self.node_gpu_distribution = node_gpu_distribution
         self.placement = placement

@@ -241,10 +241,10 @@ class Application(object):
         if placement_id in self.placements.placement.values:
             # Found in placement traces, interpolate between local_bsz.
             df = self.placements[self.placements.placement == placement_id]
-            print("用于插值的bsz：",local_bsz)
+            #print("用于插值的bsz：",local_bsz)
             interpolator = interp1d(df.local_bsz.values, df[ys].values, axis=0)
             ret = interpolator(local_bsz)
-            print("插值后")
+
         else:
             # Interpolate between num_nodes, num_replicas, and local_bsz.
             df = self.placements.groupby(xs)[xs + ys].mean()

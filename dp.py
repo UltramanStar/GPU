@@ -121,7 +121,7 @@ class DeepBoot(object): # Use DP to calculate
             delay = 10
             factor = max(age - num_restarts * delay, 0.0) / (age + delay)
             
-            for w in range(1,info.max_replicas + 1):
+            for w in range(1,info.max_replicas + 1):#为每个任务生成候选资源项，即有多少种分配情况
                 temp_w.append(w)
                 speedup = self._get_speedup(info,w)
                 if job not in prev_allocations or w != len(prev_allocations[job]):
@@ -132,7 +132,7 @@ class DeepBoot(object): # Use DP to calculate
             ws.append(temp_w)
             vs.append(temp_v)
                
-        ways = self.max_value_dp(ws,vs,num_gpus)
+        ways = self.max_value_dp(ws,vs,num_gpus)#使用动态规划算法得出最优解
         num_replicas = {}
         for i, job in enumerate(jobs):
             num_replicas[job] = ways[i]#每个任务分配到几个GPU
@@ -268,7 +268,7 @@ class DeepBoot(object): # Use DP to calculate
         allocations = {}
         allocations.update(infer_alloc) #推理任务的分配情况
         
-        free_gpus = self.get_free_gpus(total_gpus,infer_alloc)#TODO：假如推理任务只加新映射而不改allocation，free_gpus计算方式也要改
+        free_gpus = self.get_free_gpus(total_gpus,infer_alloc)
 
         train_alloc = self.allocate_elastic(prev_train_alloc, self._jobs, free_gpus)
         remain_gpus = self.get_free_gpus(free_gpus,train_alloc)

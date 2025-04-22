@@ -21,7 +21,7 @@ class InferPolicy:
         
         # 获取所有可用的推理GPU
         available_gpus = [gpu for gpu in gpus if gpu.state == "FREE"]
-        
+
         # 初始化分配结果
         job_to_gpus = {}  # 任务到GPU的映射
         gpu_to_jobs = {gpu: [] for gpu in available_gpus}  # GPU到任务的映射
@@ -35,7 +35,7 @@ class InferPolicy:
             for gpu in available_gpus:
                 # 检查GPU是否有足够的剩余空间
                 if gpu.available_space >= job.requested_gpu:
-                    allocated_gpus.append(gpu)
+                    allocated_gpus.append(gpu.gpu_id)
                     gpu_to_jobs[gpu].append(job.name)
                     if len(allocated_gpus) == needed_gpus:
                         break

@@ -243,7 +243,7 @@ class Job(object):
                 self.current_time += seconds
                 return
 
-            else:#未完成的任务
+            else:#排队中的任务
                 self.current_time += seconds
                 return
 
@@ -317,7 +317,7 @@ class Job(object):
                 self.current_time += seconds
 
                 flag = False
-                if cluster.clock >= self.completion_time:
+                if cluster.clock >= self.completion_time:#任务完成
 
                     info['status'] = 'PROTECT'
                     info['curr_job'] = None
@@ -578,7 +578,7 @@ class Cluster(object):
             job.clock = self.clock
             if job.completion_time and job.completion_time <= self.clock:
                 job.status = 'FINISH'
-            alloc_set = set(self.allocations.get(job.name, []))
+            alloc_set = set(self.allocations.get(job.name, []))#扫描任务的过程中添加allocation情况
             interference = 0.0
             if len(alloc_set) > 1 and any(idx in interfere_nodes for idx in alloc_set):
                 interference = self.interference
