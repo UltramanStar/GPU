@@ -30,7 +30,7 @@ class JobInfo(object):
 
         self.application = job.application
         self.name = job.name
-        self.requested_gpu=job.requested_gpu
+        #self.requested_gpu=job.requested_gpu
         self.inference = job.inference
         # self.protect_time = job.protect_time
 

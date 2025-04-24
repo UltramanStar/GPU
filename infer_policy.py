@@ -16,9 +16,10 @@ class InferPolicy:
                 - 任务名到GPU列表的映射
                 - GPU到任务名列表的映射
         """
+        print([job.name for job in jobs])
         # 筛选出未完成的推理任务
-        infer_jobs = [job for job in jobs if job.end_time is None]
-        
+        #infer_jobs = [job for job in jobs if job.end_time is None and job.start_execute_time is None]
+        infer_jobs = [job for job in jobs if job.end_time is None]#TODO:目前会把已执行的任务也考虑进来
         # 获取所有可用的推理GPU
         available_gpus = [gpu for gpu in gpus if gpu.state == "FREE"]
 
