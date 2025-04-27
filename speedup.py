@@ -71,4 +71,5 @@ class SpeedupFunction(object):
             speedup[missing] = goodput[inverse] / self._base_goodput
         assert np.all(np.less_equal(0, speedup))
         speedup = speedup.reshape(output_shape)
+
         return speedup.item() if output_scalar else speedup

@@ -915,8 +915,6 @@ class Cluster(object):
         )
 
     def get_node_infos(self, num_nodes=None):
-        if num_nodes:
-            print("num_nodes:",num_nodes)
 
         return {
             idx: NodeInfo({"nvidia.com/gpu": self.num_gpus}, preemptible=False)

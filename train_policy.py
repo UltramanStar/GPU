@@ -1,5 +1,5 @@
 from typing import List, Dict, Tuple
-from models import GPU, JobInfo
+from models import GPU, Job_info
 
 class TrainPolicy:
     def __init__(self):

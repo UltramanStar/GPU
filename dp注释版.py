@@ -246,7 +246,7 @@ class DeepBoot(object):  # Use DP to calculate
         allocations.update(infer_alloc)  # 更新推理任务分配
 
         # 计算空闲 GPU 资源
-        free_gpus = self.get_free_gpus(total_gpus, infer_alloc)
+        free_gpus = self.get_free_gpus(total_gpus, infer_alloc)#减去推理集群被占用的资源
 
         # 分配训练任务
         train_alloc = self.allocate_elastic(prev_train_alloc, self._jobs, free_gpus)

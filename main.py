@@ -21,12 +21,12 @@ import math
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Set
-from models import GPU, JobInfo, Job_info
+from models import GPU, Job_info
 from goodput import GoodputFunction, fit_perf_params
 from speedup import SpeedupFunction
-from train_policy import TrainPolicy
-from infer_policy import InferPolicy
+
 from share import Share
+from new_dp import DeepBoot
 from application import APPLICATIONS, APPLICATIONS_DELAY, FIRST_DELAY, NEXT_DELAY
 import logging
 
@@ -109,7 +109,11 @@ class Job:
 
 
     #一系列训练任务相关的方法
+    @property
     def max_profiled_replicas(self):
+        # temp=max((k[1] for k in self.profile), default=0)
+        # if temp >= 12:
+        #     print(f"{self.name}的max_replicas:{temp}")
         return max((k[1] for k in self.profile), default=0)
 
     def get_goodput_fn(self):
@@ -118,8 +122,9 @@ class Job:
 
     def get_speedup_fn(self):
         if self.perf_params is None:
-            return lambda n, r: r
 
+            return lambda n, r: r
+        #print("speedup")#TODO:未成功调用
         app = self.application
         return SpeedupFunction(self.get_goodput_fn(), app.max_batch_size,
                                (app.min_local_bsz, app.max_local_bsz),
@@ -129,6 +134,7 @@ class Job:
         app = self.application
         placement = tuple(filter(None, placement))
         num_nodes, num_replicas = len(placement), sum(placement)#当前的分配情况
+
         batch_size = self.target_batch_size
         if batch_size is None and self.perf_params is None:
             batch_size = max(app.init_batch_size,
@@ -151,6 +157,7 @@ class Job:
 
     def update_params(self, num_nodes, num_replicas, local_bsz,
                       step_time, sync_time, grad_sqr, grad_var):
+        #print(f"{self.name}的profile{self.profile}")
         self.grad_params = (grad_sqr, grad_var)
         if (num_nodes, num_replicas, local_bsz) in self.profile:
             return
@@ -202,7 +209,7 @@ class Job:
                 self.rescale_time = APPLICATIONS_DELAY[app_name]
 
                 self.start_execute_time = self.current_time
-                print(f"推理任务{self.name}在job_allocate设置开始时间:{self.start_execute_time}，耗时含伸缩时间")
+                #print(f"推理任务{self.name}在job_allocate设置开始时间:{self.start_execute_time}，耗时含伸缩时间")
                 self.evaluate_finish_time = self.start_execute_time + \
                     self.duration + self.rescale_time
 
@@ -304,34 +311,13 @@ class Job:
                 # Re-scale batch size between epochs.
                 self.update_local_bsz(self.placement)
             else:#推理任务
-                #TODO：目前全部在这里定义完成时间，但是没设置开始时间
-                #self.completion_time = self.current_time + self.duration  # 此刻开始执行
-                print(f"job_step中定义完成时间,{self.name}，{self.start_execute_time}开始，{self.completion_time}结束")
+
                 self.current_time += seconds
-                # if cluster.clock >= self.completion_time:  # 任务完成
-                #     self.status='FINISH'
-                # else:
-                #     self.status='RUNNING'
+
                 return #退出循环
         self.current_time+=seconds #把剩下的seconds加上
 
 
-
-    def get_job_info(self) -> JobInfo:
-        """转换为JobInfo对象，用于策略优化"""
-        return JobInfo(
-            self.name,
-            self.submit_time,
-            self.application.name,
-            self.target_num_replicas,
-            self.requested_gpu,
-            self.target_batch_size,
-            self.duration,
-            self.is_inference,
-            self.node_gpu_distribution,
-            self.placement,
-            self.evaluate_finish_time
-        )
 
     def calculate_rescale_time(self, origin_placement, current_placement):#AFE策略会用到
         app_name = self.application.name
@@ -385,9 +371,11 @@ class Cluster:
         self.jobs_submit_time = set()
         self.jobs_finish_time=set()#记录完成时间的集合
         # 初始化策略
-        self.train_policy = TrainPolicy()
-        self.infer_policy = InferPolicy()
-        self.test_policy = Share()
+
+        self.train_policy = DeepBoot()
+        self.infer_policy = Share()
+
+
 
         #日志、指标记录相关
         self.logs = []
@@ -551,9 +539,29 @@ class Cluster:
     def getJobInfo(self):#返回jobinfo类对象的字典
         job_infos = []#TODO:确定job_infos是字典还是列表
         for job in self.jobs:
+
             if self.is_valid_job(job):
-                job_infos.append(Job_info(job,job.get_speedup_fn,job.submit_time,job.target_num_replicas,job.requested_gpu,
-                                          job.duration,job.run_time))
+                job_info=Job_info(job,job.get_speedup_fn,job.submit_time,job.target_num_replicas,job.requested_gpu,
+                                          job.duration,job.run_time)
+                job_info.age=self.current_time-job.submit_time#部分策略有这个需求，未来优化判断逻辑
+                job_info.num_restarts = job.num_restarts or 0
+
+                job_infos.append(job_info)
+        return job_infos
+    def getDeepBootJobInfo(self):#返回jobinfo类对象的字典
+        job_infos = []#TODO:确定job_infos是字典还是列表
+        for job in self.jobs:
+
+            if self.is_valid_job(job):
+                job_info=Job_info(job,job.get_speedup_fn(),job.submit_time,
+                                  job.target_num_replicas,
+                                  min(max(2 * job.max_profiled_replicas, 1), 32,  # simulator can't handle more.
+                             job.application.max_batch_size // job.application.min_local_bsz),job.requested_gpu,
+                                          job.duration,job.run_time)
+                job_info.age=self.current_time-job.submit_time#部分策略有这个需求，未来优化判断逻辑
+                job_info.num_restarts = job.num_restarts or 0
+
+                job_infos.append(job_info)
         return job_infos
 
     def get_train_gpus(self) -> List[GPU]:
@@ -664,7 +672,7 @@ class Cluster:
         self.current_time += seconds
 
         current_jobs=[]
-        job_infos=self.getJobInfo()#TODO：整合JobInfo和current_jobs
+        job_infos=self.getDeepBootJobInfo()#TODO：整合JobInfo和current_jobs
         for job in self.jobs:
             if self.is_valid_job(job):
                 current_jobs.append(job)
@@ -678,13 +686,9 @@ class Cluster:
             train_jobs = [job for job in current_jobs if not job.is_inference]
             infer_jobs = [job for job in current_jobs if job.is_inference]
 
-
             new_alloc={}
             t1 = time.time()
-            # if self.clock%interval==0:#训练集群策略
-            #     policy=None
-            # else:#推理集群策略
-            #     policy=None
+
             # 批量优化训练任务
             if train_jobs:
                 # 收集训练任务的当前分配情况
@@ -695,11 +699,7 @@ class Cluster:
                 # 获取可用的训练GPU
                 available_gpus = self.get_train_gpus()
                 # 调用优化函数
-                train_allocation = self.train_policy.optimize(
-                    [job.get_job_info() for job in train_jobs],
-                    previous_allocation,
-                    available_gpus
-                )
+                train_allocation = self.train_policy.optimize(job_infos,previous_allocation,available_gpus)
                 print("训练优化结果",train_allocation)
                 new_alloc.update(train_allocation)
                 # 检查每个任务的分配方案是否发生变化
@@ -715,13 +715,7 @@ class Cluster:
                 available_gpus = self.get_infer_gpus()
                 # 调用优化函数
 
-                # infer_allocation, gpu_to_jobs = self.infer_policy.optimize(
-                #     [job.get_job_info() for job in infer_jobs],
-                #     previous_allocation,
-                #     available_gpus
-                # )
-
-                infer_allocation=self.test_policy.optimize(job_infos,previous_allocation,available_gpus)
+                infer_allocation=self.infer_policy.optimize(job_infos,previous_allocation,available_gpus)
                 print("推理优化结果",infer_allocation)
                 new_alloc.update(infer_allocation)
             t2=time.time()
@@ -731,7 +725,7 @@ class Cluster:
 
             for job in self.jobs:
                 if new_alloc.get(job.name) != self.allocations.get(job.name):#此处构建job的placement
-                    print(f"{job.name} 原alloc:{self.allocations.get(job.name)} 新alloc:{new_alloc.get(job.name)}")
+                    #print(f"{job.name} 原alloc:{self.allocations.get(job.name)} 新alloc:{new_alloc.get(job.name)}")
                     alloc = new_alloc.get(job.name, [])
                     #job.alloc = alloc#意义不明
                     placement = []
@@ -740,6 +734,7 @@ class Cluster:
                             placement=[1]
                         else:#未分配到资源，开始排队
                             job.status='WAIT'
+                            print(f"{job.name}未分配到资源，暂时排队")
                     else:
                         # 计算训练任务的node_gpu_distribution
                         node_gpu_count = {}
@@ -800,10 +795,10 @@ class Cluster:
         for gpu in self.get_train_gpus():
             running_train_jobs.update([job for job in gpu.running_jobs if not job.is_inference and job.completion_time is None])
         
-        if running_train_jobs:
-            print("\n当前运行的训练任务:")
-            for job in running_train_jobs:
-                print(f"任务 {job.name}:"f"epoch:{job.epoch} 分配的GPU: {job.allocation}")
+        # if running_train_jobs:
+        #     print("\n当前运行的训练任务:")
+        #     for job in running_train_jobs:
+        #         print(f"任务 {job.name}:"f"epoch:{job.epoch} 分配的GPU: {job.allocation}")
 
     #日志输出相关
     def output_logs(self, path):
@@ -895,8 +890,8 @@ def simulate(args=None):
 
     result_jcts = simulator.get_jcts()
 
-    for job in simulator.finished_jobs:
-        print(f"{job.name} 开始时间：{job.start_execute_time} 结束时间：{job.completion_time}")
+    # for job in simulator.finished_jobs:
+    #     print(f"{job.name} 开始时间：{job.start_execute_time} 结束时间：{job.completion_time}")
     return simulator.logs, result_jcts, simulator.gpu_util_dict, simulator.metric_dict
 
     #打印结果日志
@@ -905,7 +900,7 @@ if __name__ == "__main__":
     #输入args参数，待添加
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
-                        default="Workload/test_infer.csv")
+                        default="Workload/test.csv")
     parser.add_argument("--policy", type=str, default="dp",
                         choices=["tiresias", "optimus", "pollux", "afs", "aryl", 'dp'])
     parser.add_argument("--min-nodes", type=int, default=16,

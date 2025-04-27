@@ -42,10 +42,10 @@ class GPU:
             self.state='RUNNING'
 
     def deallocate(self, job: 'Job', requested_gpu: int):
-        print("原运行任务列表：",[job.name for job in self.running_jobs])
+
         self.available_space += requested_gpu
         self.running_jobs.remove(job)
-        print(f"任务{job.name}释放GPU{self.gpu_id}资源")
+        #print(f"任务{job.name}释放GPU{self.gpu_id}资源")
         if not job.is_inference:#训练任务
 
             self.state='FREE'#训练任务归还推理集群的GPU也是FREE
@@ -53,29 +53,14 @@ class GPU:
         if self.is_inference and not self.running_jobs:
             self.state = "PROTECT"
             self.protect_start_time = 0  # 这个值会在Cluster类中设置
-        print(f"释放GPU{self.gpu_id}资源完毕，{self.available_space}，{self.running_jobs}")
+        print(f"释放GPU{self.gpu_id}资源完毕，剩余运行任务{[job.name for job in self.running_jobs]}")
 
-class JobInfo:
-    """用于策略优化的任务信息类"""
-    def __init__(self, name, submit_time, application, num_replicas,
-                 requested_gpu: int, batch_size: int, duration: int,
-                 is_inference: bool, node_gpu_distribution: List[int], placement: List[int],end_time):
-        self.name = name
-        self.submit_time = submit_time
-        self.application = application
-        self.num_replicas = num_replicas
-        self.requested_gpu = requested_gpu
-        self.batch_size = batch_size
-        self.duration = duration
-        self.is_inference = is_inference
-        self.node_gpu_distribution = node_gpu_distribution
-        self.placement = placement
-        self.end_time=end_time
+
 
 class Job_info:
     """用于策略优化的任务信息类"""
-    def __init__(self, job, speedup_fn,submit_time, num_replicas,
-                 requested_gpu: int,  duration=-1,run_time=0):
+    def __init__(self, job, speedup_fn,submit_time, num_replicas,max_replicas=None,
+                 requested_gpu=100,  duration=-1,run_time=0):
 
         self.job=job
         self.is_inference=job.is_inference
@@ -84,10 +69,12 @@ class Job_info:
         self.application=job.application
         self.num_replicas=num_replicas
         self.min_replicas=0#用于训练任务伸缩，占位
-        self.max_replicas=num_replicas#用于训练任务伸缩，占位
+        self.max_replicas=max_replicas#用于训练任务伸缩，占位
         self.requested_gpu=requested_gpu
         self.preemptible = False#是否可抢占，占位
         self.run_time=run_time
         self.duration=duration
-
+        self.num_restarts=None
+        self.age=None
         self.name=job.name
+

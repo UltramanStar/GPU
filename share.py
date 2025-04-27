@@ -1,5 +1,5 @@
 from typing import List, Dict, Tuple
-from models import GPU, JobInfo
+from models import GPU
 import copy
 import logging
 import numpy as np
