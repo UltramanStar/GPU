@@ -1,6 +1,6 @@
 #场景：一个集群中有16个节点，每个节点各4个GPU，集群的GPU全部相同。前8个节点构成训练集群，后8个节点构成推理集群
 #训练任务和推理任务随机到来，数据集为test.csv，inference开头的表示推理任务。
-# 其中requested_gpu列表示一个副本需要的GPU空间占比。训练任务全部需要100%GPU，即GPU独占任务。
+# 其中requested_gpu列表示一个副本需要的GPU空间占比。训练任务全部需要整个GPU，即GPU独占任务。
 #推理任务需要的GPU小于一个，例如requested_gpu=50表示需要0.5个GPU。
 #推理集群的GPU允许同时运行多个推理任务，训练集群的GPU只能同时允许单个训练任务。
 #在仿真器中有三个类，GPU、Job、Cluster。GPU记录了自己的id，所属节点的id、当前的剩余可用空间、正在执行的任务列表和是否支持GPU共享
@@ -221,19 +221,7 @@ class Job:
     def job_step(self, seconds,cluster=None,interference=0.0):
 
 
-        # if not self.is_inference and self.completion_time is not None and self not in cluster.finish_job_set:
-        #     print(f"训练任务 {self.name} 已完成，完成时间: {self.completion_time}")
-        #     print(f"正在释放任务 {self.name} 的资源，完成时间{self.completion_time}:")
-        #     self.status = "FINISH"
-        #
-        #     for gpu_idx in self.allocation:
-        #         gpu = cluster.gpus[gpu_idx]
-        #         gpu.deallocate(self, 100)
-        #     self.allocation = []
-        #     cluster.finished_jobs.add(self)
-        #     cluster.finish_job_set.add(self.name)
-        #
-        #     print("已完成的任务集合：", cluster.finish_job_set)
+
         if not self.placement:#没分配到资源，推理集群的处理逻辑
             if not self.is_inference or self.submit_time > cluster.clock or self.status == 'FINISH':#训练任务或者还未提交或者已完成
                 self.current_time += seconds
@@ -260,6 +248,7 @@ class Job:
             if not self.is_inference:#
                 # Calculate current job configurations.
                 placement = tuple(filter(None, self.placement))
+
                 num_nodes, num_replicas = len(placement), sum(placement)
 
                 local_bsz = self.atomic_bsz
@@ -299,7 +288,6 @@ class Job:
                         self.application.get_completion_epoch(batch_size)#训练任务完成标准
                     if self.epoch > completion_epoch:#此处判断任务是否完成
                         self.completion_time = self.current_time + delta#训练任务完成
-                        print(f"{self.name} epoch{self.epoch} 完成时间:{self.completion_time}")
                     self.progress = next_progress
                     self.best_metric = \
                         self.application.get_best_metric(
@@ -553,9 +541,10 @@ class Cluster:
         for job in self.jobs:
 
             if self.is_valid_job(job):
+
                 job_info=Job_info(job,job.get_speedup_fn(),job.submit_time,
                                   job.target_num_replicas,
-                                  min(max(2 * job.max_profiled_replicas, 1), 32,  # simulator can't handle more.
+                                  min(max(2 * job.max_profiled_replicas, 1), 64,  # simulator can't handle more.
                              job.application.max_batch_size // job.application.min_local_bsz),job.requested_gpu,
                                           job.duration,job.run_time)
                 job_info.age=self.current_time-job.submit_time#部分策略有这个需求，未来优化判断逻辑
@@ -566,6 +555,17 @@ class Cluster:
 
     def get_train_gpus(self) -> List[GPU]:
         return [gpu for gpu in self.gpus if not gpu.is_inference]
+
+    def get_idle_gpus(self) -> List[GPU]:
+        gpu_list=[]
+        for gpu in self.gpus:
+            if not gpu.is_inference:#训练集群GPU
+                gpu_list.append(gpu)
+
+            elif gpu.state=="FREE" or gpu.state=="BORROWED":
+                gpu_list.append(gpu)
+
+        return gpu_list
 
     def get_infer_gpus(self) -> List[GPU]:
         return [gpu for gpu in self.gpus if gpu.is_inference]
@@ -581,15 +581,15 @@ class Cluster:
             return True
         # case2:有任务到来
         if self.clock in self.jobs_submit_time:
-            print("任务提交更新")
+            #print("任务提交更新")
             LOG.info("case2:有任务提交")
             return True
         # case3:有任务完成
         if self.clock in self.jobs_finish_time:
-            print("任务完成更新")
+            #print("任务完成更新")
             LOG.info("case3:有推理任务完成")
             return True
-        #case:有被挂起的推理任务可以执行（排队中）
+        #case4:有被挂起的推理任务可以执行（排队中）
         return False
 
     def update_cluster_states(self):  # simulate函数中每个时间步调用这个函数更新集群状态，TODO:在此处检测新完成的任务并释放资源
@@ -611,7 +611,7 @@ class Cluster:
 
     def apply_allocation(self, job: Job, alloc: List[int]):#此处不会释放已完成任务的资源
         """应用分配方案到集群"""
-        print("apply allocation")
+
         origin=set(job.allocation)
         new=set(alloc)
         to_deallocate=list(origin-new)
@@ -619,24 +619,22 @@ class Cluster:
 
         # TODO:处理新旧分配的重叠部分
         if len(to_deallocate)>0:
-            print(f"释放任务 {job.name} 的原有资源:")
+            print(f"释放任务 {job.name} 的原有资源:{to_deallocate}")
             for gpu_idx in to_deallocate:
                 gpu = self.gpus[gpu_idx]
-                gpu.deallocate(job, job.requested_gpu)
+                if job in gpu.running_jobs:
+                    gpu.deallocate(job, job.requested_gpu)
 
-        if job.is_inference:
-            for gpu_idx in to_allocate:
-                gpu = self.gpus[gpu_idx]
-                gpu.allocate(job, job.requested_gpu)
-        else:
-            for gpu_idx in to_allocate:
-                gpu = self.gpus[gpu_idx]
-                gpu.allocate(job, 100)  # 训练任务需要100%的GPU
+        for gpu_idx in to_allocate:
+            gpu = self.gpus[gpu_idx]
+            if not job.is_inference:
+                gpu.running_jobs=[]
+            gpu.allocate(job, job.requested_gpu)
         
         # 更新任务的allocation和集群的allocations
         job.allocation = alloc
-        job.status="RUNNING"
-        print(f"\n任务 {job.name} 分配详情:{job.allocation}")
+        job.status="RUNNING"#TODO:该逻辑会覆盖排队任务的WAIT状态
+
 
     def cluster_step(self, seconds: int,interval=60):
         #推进仿真进程seconds个时间单位
@@ -656,7 +654,7 @@ class Cluster:
             job.job_step(seconds, self)
             if job.completion_time and job not in self.finished_jobs:
                 print(f"任务 {job.name} 应该完成了，完成时间: {job.completion_time}")
-                print(f"正在释放任务 {job.name} 的资源，完成时间：{job.completion_time}")
+
                 for gpu_idx in job.allocation:
                     gpu = self.gpus[gpu_idx]
                     gpu.deallocate(job, job.requested_gpu)
@@ -672,52 +670,46 @@ class Cluster:
         self.current_time += seconds
 
         current_jobs=[]
-        job_infos=self.getDeepBootJobInfo()#TODO：整合JobInfo和current_jobs
+        job_infos=self.getDeepBootJobInfo()
         for job in self.jobs:
             if self.is_valid_job(job):
                 current_jobs.append(job)
         if current_jobs:
             current_job_names = [job.name for job in current_jobs]
+
             self.allocations = {
                 k: v for k, v in self.allocations.items() if k in current_job_names}#未完成任务的allocation，不含新任务
-            #print("即将传入的allocations",self.allocations)
 
+            #TODO:借出策略没有很好地生效，即使推理任务运行完了也没办法全部借出，怀疑是状态有问题
             # 分离训练任务和推理任务
             train_jobs = [job for job in current_jobs if not job.is_inference]
             infer_jobs = [job for job in current_jobs if job.is_inference]
 
             new_alloc={}
             t1 = time.time()
+            if self.clock % interval == 0:#训练集群策略
+                # 获取可用的训练GPU,以及FREE状态的推理GPU
+                available_gpus = self.get_idle_gpus()#含推理集群GPU
 
-            # 批量优化训练任务
-            if train_jobs:
-                # 收集训练任务的当前分配情况
-                previous_allocation = {}
-                for job in train_jobs:
-                    if job.allocation:  # 如果任务已有分配
-                        previous_allocation[job.name] = job.allocation
-                # 获取可用的训练GPU
-                available_gpus = self.get_train_gpus()
                 # 调用优化函数
-                train_allocation = self.train_policy.optimize(job_infos,previous_allocation,available_gpus)
-                print("训练优化结果",train_allocation)
-                new_alloc.update(train_allocation)
-                # 检查每个任务的分配方案是否发生变化
-
-            # 批量优化推理任务
-            if infer_jobs:
-                # 收集推理任务的当前分配情况
-                previous_allocation = {}
-                for job in infer_jobs:
-                    if job.allocation:  # 如果任务已有分配
-                        previous_allocation[job.name] = job.allocation
+                infer_job_names=[job.name for job in infer_jobs]
+                infer_alloc={k: v for k, v in self.allocations.items() if k in infer_job_names}
+                new_alloc.update(infer_alloc)
+                train_alloc = self.train_policy.optimize(job_infos, self.allocations, available_gpus)
+                new_alloc.update(train_alloc)
+                #该方式是为了解决推理任务到来的时间正好是调用训练集群策略的时间，从而调用了DeepBoot策略，对推理任务的新分配为空
+                #将推理任务错误置为WAIT状态的问题
+                # #TODO：若出现推理任务到来时恰好也需要执行训练任务的情况，先执行推理集群策略，再执行训练集群策略
+                print("训练优化结果", new_alloc)
+            else:
                 # 获取可用的推理GPU
                 available_gpus = self.get_infer_gpus()
                 # 调用优化函数
 
-                infer_allocation=self.infer_policy.optimize(job_infos,previous_allocation,available_gpus)
-                print("推理优化结果",infer_allocation)
-                new_alloc.update(infer_allocation)
+                new_alloc = self.infer_policy.optimize(job_infos, self.allocations, available_gpus)
+                print("推理优化结果", new_alloc)
+
+
             t2=time.time()
 
             optimize_time=t2-t1
@@ -725,16 +717,18 @@ class Cluster:
 
             for job in self.jobs:
                 if new_alloc.get(job.name) != self.allocations.get(job.name):#此处构建job的placement
-                    #print(f"{job.name} 原alloc:{self.allocations.get(job.name)} 新alloc:{new_alloc.get(job.name)}")
+
                     alloc = new_alloc.get(job.name, [])
                     #job.alloc = alloc#意义不明
                     placement = []
                     if job.is_inference:
                         if len(alloc)>0:
                             placement=[1]
+
                         else:#未分配到资源，开始排队
                             job.status='WAIT'
                             print(f"{job.name}未分配到资源，暂时排队")
+                            continue
                     else:
                         # 计算训练任务的node_gpu_distribution
                         node_gpu_count = {}
@@ -743,9 +737,9 @@ class Cluster:
                             if node_id not in node_gpu_count:
                                 node_gpu_count[node_id] = 0
                             node_gpu_count[node_id] += 1
-                        # 按节点ID排序并生成node_gpu_distribution列表，只考虑训练集群的节点（0-7）
+                        # 按节点ID排序并生成node_gpu_distribution列表）
                         job.node_gpu_distribution = [node_gpu_count.get(node_id, 0) for node_id in
-                                                     range(self.num_nodes // 2)]
+                                                     range(self.num_nodes)]
                         placement = [count for count in job.node_gpu_distribution if count > 0]
 
                     #计算完placement布置任务
@@ -790,15 +784,7 @@ class Cluster:
             ],
         }
 
-        # 输出所有正在运行的训练任务的placement
-        running_train_jobs = set()
-        for gpu in self.get_train_gpus():
-            running_train_jobs.update([job for job in gpu.running_jobs if not job.is_inference and job.completion_time is None])
-        
-        # if running_train_jobs:
-        #     print("\n当前运行的训练任务:")
-        #     for job in running_train_jobs:
-        #         print(f"任务 {job.name}:"f"epoch:{job.epoch} 分配的GPU: {job.allocation}")
+
 
     #日志输出相关
     def output_logs(self, path):
@@ -878,9 +864,22 @@ def simulate(args=None):
         LOG.info("Completed jobs:")
         jct_dict = simulator.get_jcts()
         LOG.info(jct_dict)
+        # 分别计算训练任务和推理任务的平均JCT
+        train_jct_values = []
+        infer_jct_values = []
 
-        LOG.info("Average JCT: %s", sum(jct_dict.values()) / len(jct_dict) if jct_dict else 0)
+        for name, jct in jct_dict.items():
+            if name.startswith('inference'):
+                infer_jct_values.append(jct)
+            else:
+                train_jct_values.append(jct)
 
+        average_train_jct = sum(train_jct_values) / len(train_jct_values) if train_jct_values else 0
+        average_infer_jct = sum(infer_jct_values) / len(infer_jct_values) if infer_jct_values else 0
+
+        #LOG.info("Average JCT: %s", sum(jct_dict.values()) / len(jct_dict) if jct_dict else 0)
+        LOG.info("Average Train JCT: %s", average_train_jct)
+        LOG.info("Average Infer JCT: %s", average_infer_jct)
         previous_clock = simulator.clock
 
     if args.output:#输出记录
@@ -900,7 +899,7 @@ if __name__ == "__main__":
     #输入args参数，待添加
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
-                        default="Workload/test.csv")
+                        default="Workload/newSmall.csv")
     parser.add_argument("--policy", type=str, default="dp",
                         choices=["tiresias", "optimus", "pollux", "afs", "aryl", 'dp'])
     parser.add_argument("--min-nodes", type=int, default=16,
@@ -987,13 +986,24 @@ if __name__ == "__main__":
     args.metric_output = args.output + '/metric.log'
     # simulator_logs, result_jcts, simulator_gpu_util_dict = simulate(args)
 
-    summary = {"jcts": {}, "avgs": {}}
+    summary = {"jcts": {}, "avgs_train": {}}
     logs, jct_dict, gpu_util_dict, metric_dict = simulate(args)#程序入口
     summary["jcts"] = jct_dict
     if len(jct_dict) == 0:
-        summary["avgs"] = 0
+        summary["avgs_train"] = 0
     else:
-        summary["avgs"] = sum(jct_dict.values()) / len(jct_dict)
+        train_jct_values = []
+        infer_jct_values = []
+
+        for name, jct in jct_dict.items():
+            if name.startswith('inference'):
+                infer_jct_values.append(jct)
+            else:
+                train_jct_values.append(jct)
+
+        avgs_train_jct = sum(train_jct_values) / len(train_jct_values) if train_jct_values else 0
+        avgs_infer_jct = sum(infer_jct_values) / len(infer_jct_values) if infer_jct_values else 0
+        summary["avgs_train"] = avgs_train_jct
 
     with open(args.output + "/summary.json", "w") as f:
         json.dump(summary, f, indent=4)

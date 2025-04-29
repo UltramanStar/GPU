@@ -14,7 +14,7 @@ class GPU:
     def __init__(self, gpu_id: int, node_id: int, is_inference: bool,save_time=30):
         self.gpu_id = gpu_id
         self.node_id = node_id
-        self.available_space = 100  # 初始可用空间为100%
+        self.available_space = 7  # 初始可用空间为7个实例
         self.running_jobs = []  # 当前运行的任务列表
         self.application_cache=set()
         self.is_inference = is_inference  # 是否为推理GPU
@@ -30,6 +30,7 @@ class GPU:
     def allocate(self, job, requested_gpu: int):
 
         self.available_space -= requested_gpu
+
         self.running_jobs.append(job)
 
         if self.is_inference:
@@ -38,6 +39,8 @@ class GPU:
                 self.application_cache.add(job.app)  # 添加缓存
             else:#训练任务使用推理集群的GPU
                 self.state="BORROWED"
+                #print(f"训练任务{job.name}借用GPU{self.gpu_id}")
+
         else:#训练集群GPU
             self.state='RUNNING'
 
@@ -47,20 +50,22 @@ class GPU:
         self.running_jobs.remove(job)
         #print(f"任务{job.name}释放GPU{self.gpu_id}资源")
         if not job.is_inference:#训练任务
-
             self.state='FREE'#训练任务归还推理集群的GPU也是FREE
+            #print(f"训练任务{job.name}释放GPU{self.gpu_id}")
+            return
 
         if self.is_inference and not self.running_jobs:
             self.state = "PROTECT"
             self.protect_start_time = 0  # 这个值会在Cluster类中设置
-        print(f"释放GPU{self.gpu_id}资源完毕，剩余运行任务{[job.name for job in self.running_jobs]}")
+
+        #print(f"释放GPU{self.gpu_id}资源完毕，剩余运行任务{[job.name for job in self.running_jobs]}")
 
 
 
 class Job_info:
     """用于策略优化的任务信息类"""
     def __init__(self, job, speedup_fn,submit_time, num_replicas,max_replicas=None,
-                 requested_gpu=100,  duration=-1,run_time=0):
+                 requested_gpu=7,  duration=-1,run_time=0):
 
         self.job=job
         self.is_inference=job.is_inference

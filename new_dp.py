@@ -14,7 +14,7 @@ class DeepBoot(object): # Use DP to calculate
         self._prev_jobs = None
         self._prev_nodes = None
         self.jobs = None
-        self.num_nodes = 8
+        self.num_nodes = 16
         self.gpu_each_node=4
         self.total_gpus = None#GPU总数
         self.sched_train = True
@@ -163,7 +163,7 @@ class DeepBoot(object): # Use DP to calculate
         for idx, job in enumerate(train_jobs):
             self._job_resources[idx, 0] = 1
         # 构建节点资源矩阵
-        len_nodes=8#传入推理推理集群后改成16
+        len_nodes=self.num_nodes#节点数量
         self._node_resources = np.zeros((len_nodes, 1), dtype=np.int64)
         for k in range(len_nodes):
             self._node_resources[k]=[4]
@@ -192,15 +192,20 @@ class DeepBoot(object): # Use DP to calculate
         # 套用DeepBoot的逻辑
         allocations = {}
         infer_alloc={}
+        prev_train_alloc={}
+
         for jobinfo in infer_jobs:
             infer_alloc[jobinfo.name]=jobinfo.job.allocation
+        for jobinfo in train_jobs:
+            prev_train_alloc[jobinfo.name]=jobinfo.job.allocation
         # 3. 获取最优分配方案
         free_gpus = self.get_free_gpus(gpus, infer_alloc)  # 减去推理集群被占用的资源
-        train_alloc = self.allocate_elastic(base_allocations,train_jobs,free_gpus)
-        # 4.
+
+        train_alloc = self.allocate_elastic(prev_train_alloc,train_jobs,free_gpus)
+        allocations.update(train_alloc)
+        #allocations.update(infer_alloc)
 
         # 5. 转换为具体的 GPU 分配方案
-
         
-        return train_alloc
+        return allocations
 

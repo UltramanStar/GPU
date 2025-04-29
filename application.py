@@ -233,9 +233,9 @@ class Application(object):
         placement = tuple(filter(None, placement))
         placement = min(placement[i:] + placement[:i]
                         for i in range(len(placement)))
-        print("排序的placement", placement)
+
         placement_id = int("".join(map(str, placement)))
-        print("placement_id",placement_id)
+
         xs = ["num_nodes", "num_replicas", "local_bsz"]
         ys = ["step_time", "sync_time"]
         if placement_id in self.placements.placement.values:

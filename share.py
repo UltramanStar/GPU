@@ -46,16 +46,22 @@ class Share:
         self.get_gpu_state(infer_gpus)
         train_jobs=[job for job in job_infos if not job.is_inference]
         infer_jobs = [job for job in job_infos if job.is_inference]
+
+        job_names=[job.name for job in infer_jobs]
+        #print("share策略收到任务：",job_names)
         #提取待分配的推理任务
         self.remain_jobs=[jobInfo for jobInfo in infer_jobs if jobInfo.job.status == 'WAIT' or jobInfo.job.status == 'START']
-
+        # for job in infer_jobs:
+        #     print(f"{job.name}状态：{job.job.status}")
         #按提交时间排序
         self.remain_jobs = sorted(self.remain_jobs, key=lambda x: x.submit_time)
         allocations=copy.deepcopy(prev_alloc)
         for job in self.remain_jobs:
+
             gpuID=self.select_gpu(job)
             if gpuID == -1:
                 allocations[job.name]=[]#无合适的GPU，需要等待
+                print(job.name,"需等待")
             else:
                 allocations[job.name]=[gpuID]
                 self.gpu_state[gpuID]-=job.requested_gpu
