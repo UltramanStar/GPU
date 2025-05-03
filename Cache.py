@@ -8,7 +8,7 @@ import collections
 #输入：推理GPU集群、是否带训练GPU集群暂定、已提交未完成的任务(在优化函数中筛选未分配资源的推理任务)、之前的分配情况
 #输出：优化后所有任务的分配方案
 
-#当前策略：先到先服务，FirstFit
+#当前策略：先到先服务，优先选择有缓存的GPU
 #
 LOG = logging.getLogger('infer_scheduler')
 LOG.setLevel(logging.INFO)
@@ -17,7 +17,7 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 # ch = logging.StreamHandler()
 # ch.setFormatter(formatter)
 # LOG.addHandler(ch)
-class Share:
+class CacheFirst:
     def __init__(self):
         self.gpu_state= {}#暂存GPU集群的状态
 
@@ -30,15 +30,18 @@ class Share:
             self.gpu_state[gpu.gpu_id]=gpu.available_space
 
 
-#选择GPU的策略：FirstFit
-    def select_gpu(self,job):#为每个任务选择gpu，TODO：回收逻辑，优先回收缓存相同的训练任务占用的GPU
+#选择GPU的策略：先找缓存
+    def select_gpu(self,job,infer_gpus):#为每个任务选择gpu，TODO：回收逻辑，优先回收缓存相同的训练任务占用的GPU
         gpuID=-1
+        for gpu in infer_gpus:#先看看是否存在有缓存且能放下的gpu
+            if job.job.app in gpu.app_cache:
+                if job.requested_gpu<=self.gpu_state[gpu.gpu_id]:
+                    return gpu.gpu_id
         for gpu_id,space in self.gpu_state.items():
             if space>=job.requested_gpu:
                 gpuID=gpu_id
                 break
         return gpuID
-
 
 
     def optimize(self, job_infos, prev_alloc, infer_gpus) :
@@ -65,7 +68,7 @@ class Share:
         allocations=copy.deepcopy(prev_alloc)
         for job in self.remain_jobs:
 
-            gpuID=self.select_gpu(job)
+            gpuID=self.select_gpu(job,infer_gpus)
             if gpuID == -1:
                 allocations[job.name]=[]#无合适的GPU，需要等待
                 print(job.name,"需等待")

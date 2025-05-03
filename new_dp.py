@@ -79,6 +79,23 @@ class DeepBoot(object): # Use DP to calculate
             occupied_gpus.update(gpu_list)
         free_gpus = [gpu for gpu in available_gpus if gpu not in occupied_gpus]#空闲的GPU下标列表
 
+        # 计算每个节点的空闲GPU数量
+        free_gpus_count = {}
+        for gpu in free_gpus:
+            node_idx = gpu // 4 #计算节点下标
+            if node_idx not in free_gpus_count:
+                free_gpus_count[node_idx] = 0
+            free_gpus_count[node_idx] += 1
+
+        # 按照所在节点的空闲GPU数量和节点下标排序
+        free_gpus.sort(key=lambda gpu: (free_gpus_count[gpu // 4], gpu))
+
+        # 将 free_gpus 分为两部分：0~31 和 32~63
+        part1 = [gpu for gpu in free_gpus if gpu <= 31]
+        part2 = [gpu for gpu in free_gpus if gpu >= 32]
+        # 合并两个部分，训练集群在前，推理集群在后
+        free_gpus = part1 + part2
+
         for job in job_keys:
             # 为每个任务分配 GPU 资源
             if num_replicas[job] > 0 and not allocations.get(job):#未分配到任务
@@ -150,8 +167,14 @@ class DeepBoot(object): # Use DP to calculate
         self.total_gpus=len(gpus)
         #available_gpus = self.get_free_gpus(gpus, base_allocations)#把推理集群中能用的GPU算进来
 
+        def ispinned(job):
+            return not job.preemptible and base_allocations.get(job.name, []) != []
+        job_infos=sorted(job_infos,
+                         key=lambda jobinfo:(not ispinned(jobinfo),
+                                             jobinfo.attained_service,
+                                             jobinfo.submit_time))
 
-        train_jobs = [job for job in job_infos if not job.is_inference]#TODO：给训练集群排序
+        train_jobs = [job for job in job_infos if not job.is_inference]
         infer_jobs = [job for job in job_infos if job.is_inference]
 
 
@@ -159,7 +182,7 @@ class DeepBoot(object): # Use DP to calculate
         #使用pollux的逻辑
 
         self._job_resources = np.zeros((len(train_jobs), 1), dtype=np.int64)#获取每个任务需要的资源
-        # TODO:赋值
+
         for idx, job in enumerate(train_jobs):
             self._job_resources[idx, 0] = 1
         # 构建节点资源矩阵
@@ -169,7 +192,7 @@ class DeepBoot(object): # Use DP to calculate
             self._node_resources[k]=[4]
 
 
-        #print(f"资源矩阵{self._job_resources} {self._node_resources}")
+
         shares = self._job_resources / np.sum(self._node_resources, axis=0)#节点GPU总数
         self._dominant_share = np.amax(shares, axis=1)
 
