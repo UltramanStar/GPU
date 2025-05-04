@@ -27,6 +27,7 @@ from speedup import SpeedupFunction
 
 from share import Share
 from Cache import CacheFirst
+from queue import Queueing
 from new_dp import DeepBoot
 from application import APPLICATIONS, APPLICATIONS_DELAY, FIRST_DELAY, NEXT_DELAY
 import logging
@@ -364,6 +365,7 @@ class Cluster:
         self.high_util = high_util  # 利用率上界
         self.allocations = {}  # 记录所有任务的分配情况，键为任务名，值为GPU下标列表
         self.jobs_submit_time = set()
+        self.waiting_job={}
         self.jobs_finish_time=set()#记录完成时间的集合
         # 初始化策略
         #self.cache_first=True#是否使用缓存优先策略
@@ -449,7 +451,7 @@ class Cluster:
     def calculate_goodput_and_speedup(self):
         speedups = []
         goodputs = []
-        job_infos = self.getDeepBootJobInfo()#TODO:没写这个函数
+        #job_infos = self.getDeepBootJobInfo()
         for job in self.jobs:
             if job.is_inference or job.name not in self.allocations:
                 continue
@@ -532,13 +534,14 @@ class Cluster:
         return False#推理任务待定
 
     def getJobInfo(self):#返回jobinfo类对象的字典
-        job_infos = []#TODO:确定job_infos是字典还是列表
+        job_infos = []
         for job in self.jobs:
 
             if self.is_valid_job(job):
                 job_info=Job_info(job,job.get_speedup_fn,job.submit_time,job.target_num_replicas,job.requested_gpu,
                                           job.duration,job.run_time)
                 job_info.age=self.current_time-job.submit_time#部分策略有这个需求，未来优化判断逻辑
+
                 job_info.num_restarts = job.num_restarts or 0
 
                 job_infos.append(job_info)
@@ -602,11 +605,16 @@ class Cluster:
             return True
         # case3:有任务完成
         if self.clock in self.jobs_finish_time:
-            #print("任务完成更新")
+            #print("case3:任务完成更新")
             LOG.info("case3:有推理任务完成")
 
             return True
-        #case4:有被挂起的推理任务可以执行（排队中）
+        #case4:有排队中的推理任务等待时间过长，尝试回收资源
+        if self.waiting_job:
+            print("case4:任务排队时间过长")
+            print(self.waiting_job)
+            if self.clock - max(self.waiting_job.values())>15:#有任务超过最大排队时间
+                return True
         return False
 
     def update_cluster_states(self):  # simulate函数中每个时间步调用这个函数更新集群状态，TODO：尚未被使用
@@ -704,7 +712,7 @@ class Cluster:
         to_deallocate=list(origin-new)
         to_allocate=list(new-origin)
 
-        # TODO:处理新旧分配的重叠部分
+
         if len(to_deallocate)>0:
             #print(f"释放任务 {job.name} 的原有资源:{to_deallocate}")
             for gpu_idx in to_deallocate:
@@ -720,6 +728,7 @@ class Cluster:
         
         # 更新任务的allocation和集群的allocations
         job.allocation = alloc
+        self.waiting_job.pop(job.name,None)
         job.status="RUNNING"#TODO:该逻辑会覆盖排队任务的WAIT状态
 
 
@@ -790,34 +799,38 @@ class Cluster:
             self.allocations = {
                 k: v for k, v in self.allocations.items() if k in current_job_names}#未完成任务的allocation，不含新任务
 
-            #TODO:借出策略没有很好地生效，即使推理任务运行完了也没办法全部借出，怀疑是状态有问题
-            # 分离训练任务和推理任务
+
             train_jobs = [job for job in job_infos if not job.is_inference]
             infer_jobs = [job for job in job_infos if job.is_inference]
 
             new_alloc={}
             t1 = time.time()
+
             if self.clock % interval == 0:#训练集群策略
                 # 获取可用的训练GPU,以及FREE状态的推理GPU
+                if self.clock in self.jobs_submit_time:#恰好有推理任务也到来，先执行推理集群策略
+                    available_gpus = self.get_infer_gpus()
+                    # 调用优化函数
+                    new_alloc = self.infer_policy.optimize(job_infos, self.allocations, available_gpus)
+                    print("推理优化结果", new_alloc)
+
                 available_gpus = self.get_idle_gpus()#含推理集群GPU
 
                 # 调用优化函数
-                infer_job_names=[job.name for job in infer_jobs]
-                infer_alloc={k: v for k, v in self.allocations.items() if k in infer_job_names}
-                new_alloc.update(infer_alloc)
+                infer_job_names = [job.name for job in infer_jobs]
+                infer_alloc = {k: v for k, v in self.allocations.items() if k in infer_job_names}
+                if not new_alloc:
+                    new_alloc.update(infer_alloc)
                 train_alloc = self.train_policy.optimize(job_infos, self.allocations, available_gpus)
                 new_alloc.update(train_alloc)
-                #该方式是为了解决推理任务到来的时间正好是调用训练集群策略的时间，从而调用了DeepBoot策略，对推理任务的新分配为空
-                #将推理任务错误置为WAIT状态的问题
-                # #TODO：若出现推理任务到来时恰好也需要执行训练任务的情况，先执行推理集群策略，再执行训练集群策略
+
                 print("训练优化结果", new_alloc)
-            else:
+            else:#有推理任务提交或完成
                 # 获取可用的推理GPU
                 available_gpus = self.get_infer_gpus()
                 # 调用优化函数
                 new_alloc = self.infer_policy.optimize(job_infos, self.allocations, available_gpus)
                 print("推理优化结果", new_alloc)
-
 
             t2=time.time()
 
@@ -838,9 +851,11 @@ class Cluster:
                             gpu = self.gpus[alloc[0]]#前提：限定推理任务只在一个GPU上执行
                             if job.app in gpu.app_cache:
                                 job.use_cache=True
+
                         else:#未分配到资源，开始排队
                             job.status='WAIT'
                             print(f"{job.name}未分配到资源，暂时排队")
+                            self.waiting_job[job.name]=self.current_time
                             continue
                     else:
                         # 计算训练任务的node_gpu_distribution
@@ -936,6 +951,8 @@ def simulate(args=None):
         policy = CacheFirst()
     elif args.infer_policy == "FirstFit":
         policy = Share()
+    else:
+        policy = Queueing()
     simulator = Cluster(infer_policy=policy,num_gpus=args.num_gpus,interference=args.interference,max_nodes=args.max_nodes,
                         protect_time=args.protect_time,cache_time=args.cache_time,
                         low_util=args.low_util, high_util=args.high_util)
@@ -948,13 +965,13 @@ def simulate(args=None):
         real_gpu_util, real_running_gpu_util, gpu_util = simulator.calculate_real_gpu_usage()
         infer_gpu_usage,frag_ratio,wasted_ratio = simulator.check_infer_gpu_usage()
         #If calculate the goodput and speedup in the whole process, use follow code
-        sum_goodput, avg_goodput, sum_speedup, avg_speedup = simulator.calculate_goodput_and_speedup()
-
-        simulator.metric_dict['clock'].append(simulator.clock)
-        simulator.metric_dict['sum_goodput'].append(sum_goodput)
-        simulator.metric_dict['avg_goodput'].append(avg_goodput)
-        simulator.metric_dict['sum_speedup'].append(sum_speedup)
-        simulator.metric_dict['avg_speedup'].append(avg_speedup)
+        # sum_goodput, avg_goodput, sum_speedup, avg_speedup = simulator.calculate_goodput_and_speedup()
+        #
+        # simulator.metric_dict['clock'].append(simulator.clock)
+        # simulator.metric_dict['sum_goodput'].append(sum_goodput)
+        # simulator.metric_dict['avg_goodput'].append(avg_goodput)
+        # simulator.metric_dict['sum_speedup'].append(sum_speedup)
+        # simulator.metric_dict['avg_speedup'].append(avg_speedup)
 
         simulator.gpu_util_dict['clock'].append(simulator.clock)
         simulator.gpu_util_dict['real_gpu_use'].append(real_gpu_util)
@@ -1029,8 +1046,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
                         default="Workload/newSmall.csv")
-    parser.add_argument("--infer_policy", type=str, default="Cache",
-                        choices=["FirstFit", "BestFit", "Cache", "WaitCache", "Random"],
+    parser.add_argument("--infer_policy", type=str, default="Queue",
+                        choices=["FirstFit", "BestFit", "Cache", "Queue", "Random"],
                         help="推理集群采用的策略")
     parser.add_argument("--min-nodes", type=int, default=16,
                         help="min number of nodes in the cluster")

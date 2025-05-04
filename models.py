@@ -21,6 +21,7 @@ class GPU:
         self.is_inference = is_inference  # 是否为推理GPU
         self.state = "FREE"  # 直接使用字符串表示状态
         self.protect_start_time = 0#保护状态开始的时间
+        self.borrowed_start_time = 0  # 保护状态开始的时间
         self.save_time=save_time#缓存的保留时间
         self.protect_time=protect_time#GPU保留给推理任务的时间
         self.protect_level=1#保护等级
@@ -38,12 +39,11 @@ class GPU:
         if self.is_inference:
             if job.is_inference:
                 self.state = "RUNNING"
-                #self.application_cache.add(job.app)  # 添加缓存
+
                 #任务未结束时持续保存缓存
             else:#训练任务使用推理集群的GPU
                 self.state="BORROWED"
-                #self.application_cache=set()#清空缓存，只保留当前任务
-                #self.application_cache.add(job.app)
+                self.borrowed_start_time=time
 
                 #print(f"训练任务{job.name}借用GPU{self.gpu_id}")
         else:#训练集群GPU

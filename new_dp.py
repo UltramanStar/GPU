@@ -226,9 +226,7 @@ class DeepBoot(object): # Use DP to calculate
 
         train_alloc = self.allocate_elastic(prev_train_alloc,train_jobs,free_gpus)
         allocations.update(train_alloc)
-        #allocations.update(infer_alloc)
 
-        # 5. 转换为具体的 GPU 分配方案
         
         return allocations
 
