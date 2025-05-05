@@ -59,8 +59,8 @@ def app_trans(app_name):
         return "-".join(app_name_split[:-1])
         
 class Job:
-    def __init__(self, name: str, time: int, application: str, num_replicas: int, 
-                 requested_gpu: int, batch_size: int, duration: int, num_task: int):
+    def __init__(self, name: str, time: int, application: str, num_replicas=1,
+                 requested_gpu=7, batch_size=None, duration=0, num_task=0):
         self.name = name
         self.submit_time = time#提交时间
         self.application = APPLICATIONS[app_trans(application)]
@@ -120,14 +120,18 @@ class Job:
 
     def get_goodput_fn(self):
         app = self.application
+
         return GoodputFunction(self.perf_params, self.grad_params, app.init_batch_size)
 
     def get_speedup_fn(self):
         if self.perf_params is None:
 
             return lambda n, r: r
-        #print("speedup")#TODO:未成功调用
+
+
         app = self.application
+
+
         return SpeedupFunction(self.get_goodput_fn(), app.max_batch_size,
                                (app.min_local_bsz, app.max_local_bsz),
                                accumulation=True)
@@ -146,6 +150,7 @@ class Job:
             _, self.atomic_bsz, self.accum_steps = goodput_fn.optimize(
                 num_nodes, num_replicas, app.max_batch_size,
                 (app.min_local_bsz, app.max_local_bsz), accumulation=True)
+
         else:
             local_bsz = math.ceil(batch_size / num_replicas - 1e-8)
             self.accum_steps = math.ceil(
@@ -156,6 +161,7 @@ class Job:
                 local_bsz / (self.accum_steps + 1) - 1e-8)
         count = num_replicas * (self.accum_steps + 1)
         self.atomic_bsz = min(self.atomic_bsz, int(app.max_batch_size / count))
+
 
     def update_params(self, num_nodes, num_replicas, local_bsz,
                       step_time, sync_time, grad_sqr, grad_var):
@@ -260,6 +266,7 @@ class Job:
                 batch_size = num_replicas * \
                              self.atomic_bsz * (self.accum_steps + 1)  # Pollux论文中的M
                 scale = batch_size / self.application.init_batch_size
+
                 # Calculate true (simulated) throughput.
                 step_time, sync_time = \
                     self.application.get_throughput(placement, self.atomic_bsz)
@@ -269,6 +276,7 @@ class Job:
                     self.application.get_grad_stats(batch_size, self.epoch)
                 gain = (grad_var + grad_sqr) / (grad_var / scale + grad_sqr)
                 # Update the estimated throughput/efficiency parameters.
+
                 self.update_params(num_nodes, num_replicas, self.atomic_bsz,
                                    step_time, sync_time, grad_sqr, grad_var)
                 # Calculate true (simulated) goodput.
@@ -510,15 +518,25 @@ class Cluster:
     def load_jobs(self, csv_file: str):
         df = pd.read_csv(csv_file)
         for row in df.itertuples():
+            # job = Job(
+            #     name=row.name,
+            #     time=row.time,
+            #     application=row.application,
+            #     num_replicas=row.num_replicas,
+            #     requested_gpu=row.requested_gpu,
+            #     target_batch_size=row.batch_size,
+            #     duration=row.duration,
+            #     num_task=row.num_task
+            # )
             job = Job(
-                row.name,
-                row.time,
-                row.application,
-                row.num_replicas,
-                row.requested_gpu,
-                row.batch_size,
-                row.duration,
-                row.num_task
+                name=row.name,
+                time=row.time,
+                application=row.application,
+
+                requested_gpu=row.requested_gpu,
+
+                duration=row.duration,
+
             )
             if job.application.name == "ncf":
                 job.target_batch_size = 32768
@@ -552,11 +570,11 @@ class Cluster:
 
             if self.is_valid_job(job):
 
-                job_info=Job_info(job,job.get_speedup_fn(),job.submit_time,job.attained_service,
-                                  job.target_num_replicas,
-                                  min(max(2 * job.max_profiled_replicas, 1), 64,  # simulator can't handle more.
-                             job.application.max_batch_size // job.application.min_local_bsz),job.requested_gpu,
-                                          job.duration,job.run_time)
+                job_info=Job_info(job=job,speedup_fn=job.get_speedup_fn(),submit_time=job.submit_time,attained_service=job.attained_service,
+                                  num_replicas=job.target_num_replicas,
+                                  max_replicas=min(max(2 * job.max_profiled_replicas, 1), 64,  # simulator can't handle more.
+                             job.application.max_batch_size // job.application.min_local_bsz),requested_gpu=job.requested_gpu,
+                                          duration=job.duration,run_time=job.run_time)
                 job_info.age=self.current_time-job.submit_time#部分策略有这个需求，未来优化判断逻辑
                 job_info.num_restarts = job.num_restarts or 0
                 if job.application.name == "ncf":
@@ -601,19 +619,17 @@ class Cluster:
         if self.clock in self.jobs_submit_time:
 
             LOG.info("case2:有推理任务提交")
-
             return True
         # case3:有任务完成
         if self.clock in self.jobs_finish_time:
             #print("case3:任务完成更新")
             LOG.info("case3:有推理任务完成")
-
             return True
         #case4:有排队中的推理任务等待时间过长，尝试回收资源
         if self.waiting_job:
-            print("case4:任务排队时间过长")
-            print(self.waiting_job)
-            if self.clock - max(self.waiting_job.values())>15:#有任务超过最大排队时间
+            print(f"当前时间{self.clock}，排队队列{self.waiting_job}")
+            if self.clock - max(self.waiting_job.values())>10:#有任务超过最大排队时间
+                print("case4:任务排队时间过长")
                 return True
         return False
 
@@ -779,6 +795,7 @@ class Cluster:
         self.current_time += seconds
         job_infos = self.getDeepBootJobInfo()
         current_job_names = [job.name for job in job_infos]
+
 
         if job_infos:
 
@@ -1046,7 +1063,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
                         default="Workload/newSmall.csv")
-    parser.add_argument("--infer_policy", type=str, default="Queue",
+    parser.add_argument("--infer_policy", type=str, default="FirstFit",
                         choices=["FirstFit", "BestFit", "Cache", "Queue", "Random"],
                         help="推理集群采用的策略")
     parser.add_argument("--min-nodes", type=int, default=16,

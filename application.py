@@ -212,6 +212,7 @@ class Application(object):
     @memoize
     def get_grad_stats(self, batch_size, epoch):
         # Returns the gradient sqr and var estimates during a given epoch.
+
         lower_bsz, upper_bsz = self._validated_batch_sizes(batch_size)
         lower_sqr = self.validation[lower_bsz].grad_sqr[epoch]
         upper_sqr = self.validation[upper_bsz].grad_sqr[epoch]

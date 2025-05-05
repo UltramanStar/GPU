@@ -222,6 +222,13 @@ class DeepBoot(object):  # Use DP to calculate
             for r, rtype in enumerate(rtypes):
                 self._node_resources[n, r] = node.resources.get(rtype, 0)
 
+        for job_name, alloc in infer_alloc.items():
+            for r, rtype in enumerate(rtypes):
+                # LOG.info("alloc: %s",alloc)
+                if len(alloc) == 0:
+                    continue
+                node_id = self.node_id_dict[alloc[0]]
+                self._node_resources[node_id] -= infer_jobs[job_name].resources.get(rtype, 0)
         # 计算每个任务的主导资源份额
         shares = self._job_resources / np.sum(self._node_resources, axis=0)
         self._dominant_share = np.amax(shares, axis=1)

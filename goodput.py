@@ -87,7 +87,7 @@ class GoodputFunction(object):
         grad_var = self._grad_params.var
         scale = batch_size / self._init_batch_size
         denom = grad_var / scale + grad_sqr
-        gain = np.where(denom > 0, (grad_var + grad_sqr) / denom, 1.0)#返回的是一个标量
+        gain = np.where(denom > 0, (grad_var + grad_sqr) / denom, 1.0)
         return gain / scale
 
     def optimize(self, num_nodes, num_replicas, max_batch_size=None,
@@ -142,10 +142,10 @@ class GoodputFunction(object):
         # Find the indices of the best configurations.
         indices = np.argmax(goodput, axis=0), np.arange(goodput.shape[1])
         # Restore the correct output shape and return results.
-        goodput = goodput[indices].reshape(output_shape)#高级索引
+        goodput = goodput[indices].reshape(output_shape)
         atomic_bsz = atomic_bsz[indices].reshape(output_shape)
         accum_steps = accum_steps[indices].reshape(output_shape)
-        if output_scalar:#是否为标量
+        if output_scalar:
             goodput = goodput.item()
             atomic_bsz = atomic_bsz.item()
             accum_steps = accum_steps.item()

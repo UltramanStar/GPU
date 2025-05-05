@@ -21,7 +21,7 @@ class Queueing:
     def __init__(self):
         self.gpu_state= {}#暂存GPU集群的状态
         self.borrowed_gpus=[]
-        self.max_wait_time=15 #容忍排队的最长时间
+        self.max_wait_time=10 #容忍排队的最长时间
 
     def get_gpu_state(self, infer_gpus):#键值对，gpu_id：剩余空间。 后续考虑缓存可能把值变成一个列表
         #对比策略：按何属性排序

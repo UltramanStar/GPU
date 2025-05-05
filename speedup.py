@@ -27,6 +27,7 @@ class SpeedupFunction(object):
         self._base_goodput, _, _ = goodput_fn.optimize(
             num_nodes=1, num_replicas=1, max_batch_size=max_batch_size,
             atomic_bsz_range=atomic_bsz_range, accumulation=accumulation)
+
         # Memoization for fast repeated queries.
         self._mem_speedup = -np.ones((mem_size, mem_size))
         self._mem_speedup[0, 0] = 0.0
@@ -44,8 +45,7 @@ class SpeedupFunction(object):
         speedup = -np.ones(output_shape).flatten()
         # Fill in any previously memoized results first.
         indices = num_replicas < self._mem_size
-        
-        
+
         mem_idx = (num_nodes[indices], num_replicas[indices])
         # print("mem idx:",mem_idx)
         # print("indices:",indices)
@@ -56,8 +56,8 @@ class SpeedupFunction(object):
             num_nodes, num_replicas = num_nodes[missing], num_replicas[missing]
             # Find unique inputs to reduce compuation.
             (num_nodes, num_replicas), inverse = np.unique(
-                    np.stack([num_nodes, num_replicas]),
-                    axis=1, return_inverse=True)
+                np.stack([num_nodes, num_replicas]),
+                axis=1, return_inverse=True)
             goodput, _, _ = self._goodput_fn.optimize(
                 num_nodes, num_replicas,
                 max_batch_size=self._max_batch_size,
@@ -71,5 +71,4 @@ class SpeedupFunction(object):
             speedup[missing] = goodput[inverse] / self._base_goodput
         assert np.all(np.less_equal(0, speedup))
         speedup = speedup.reshape(output_shape)
-
         return speedup.item() if output_scalar else speedup

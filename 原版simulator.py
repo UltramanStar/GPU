@@ -142,6 +142,7 @@ class Job(object):
 
     def get_speedup_fn(self):
         if self.perf_params is None:
+
             return lambda n, r: r
 
         app = self.application

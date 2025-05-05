@@ -29,30 +29,28 @@ class DeepBoot(object): # Use DP to calculate
 
         return job.speedup_fn(num_nodes, num_replicas)  # 返回速度提升
 
-    def max_value_dp(self, ws, vs, m):#完全别动
-        # 动态规划算法，用于求解背包问题
-        n = len(ws) - 1  # 任务数量
-        dp = np.zeros(shape=(n + 1, m + 1))  # 初始化动态规划表
+    def max_value_dp(self, ws, vs, m):
+        # group knapsack
 
-        for i in range(1, n + 1):  # 遍历每个任务
-            for j in range(m, -1, -1):  # 遍历资源限制，从大到小
-                dp[i][j] = dp[i - 1][j]  # 初始化为不选择当前任务的情况
-                for k in range(len(ws[i])):  # 遍历当前任务的所有可能资源分配
+        n = len(ws) - 1
+        dp = np.zeros(shape=(n + 1, m + 1))
+        for i in range(1, n + 1):  # 任务
+            for j in range(m, -1, -1):
+                dp[i][j] = dp[i - 1][j]
+                for k in range(len(ws[i])):
                     if j >= ws[i][k]:
-                        # 更新最大值
                         dp[i][j] = max(dp[i][j], dp[i - 1][j - ws[i][k]] + vs[i][k])
 
-        # 回溯路径，找到最优解
         j = m
-        ways = np.zeros(n + 1, dtype=int)  # 用于存储每个任务的分配
+        ways = np.zeros(n + 1, dtype=int)
         for i in range(n, 0, -1):
             for k in range(len(ws[i])):
                 if j >= ws[i][k] and dp[i][j] == dp[i - 1][j - ws[i][k]] + vs[i][k]:
-                    ways[i] = ws[i][k]  # 记录当前任务的资源分配
-                    j -= ws[i][k]  # 更新剩余资源
+                    ways[i] = ws[i][k]  # limitation of task k
+                    j -= ws[i][k]
                     break
 
-        return ways[1:]  # 返回最优解
+        return ways[1:]
 
     def get_free_gpus(self, total_gpus, allocations):#返回结果是用于训练集群动态规划的GPU列表
         """获取可用的 GPU"""
@@ -64,6 +62,27 @@ class DeepBoot(object): # Use DP to calculate
         # 返回未分配的 GPU ID
         return [gpu.gpu_id for gpu in total_gpus if gpu.gpu_id not in allocated_gpus]
 
+    def select_gpus(self,gpu_need,nodes_info):
+        '''
+                num_replica: gpus needed by current tasks
+                free_gpus: free gpus in each node
+                '''
+
+        max_idle_node = max(nodes_info, key=lambda k: len(nodes_info[k]))
+
+        if gpu_need >= len(nodes_info[max_idle_node]):
+            return max_idle_node, nodes_info[max_idle_node]
+
+        else:
+            f = {k: v for k, v in nodes_info.items() if len(v) >= gpu_need}#能满足任务需求的节点及其GPU列表
+            nodes, cnts = list(f.keys()), [len(v) for v in f.values()]
+            if not nodes:
+                print("异常，找不到满足条件的节点")
+                return None, []  # 如果没有满足条件的节点，返回 None 或其他默认值
+            node_id = np.argmin(cnts)
+            node = nodes[node_id]
+            return node, nodes_info[node]
+
     def replicas2allocation(self, job_names, allocations, num_replicas, available_gpus):
         """将副本数量转换为具体的 GPU 分配方案"""
         # num_replicas为字典
@@ -71,7 +90,6 @@ class DeepBoot(object): # Use DP to calculate
         # 按照副本数排序任务
         job_keys = sorted(job_names, key=lambda k: num_replicas[k])
         # 过滤出副本数匹配的分配，这些任务分配不变
-
         allocations = {k: v for k, v in allocations.items() if len(v) == num_replicas[k]}
         # 计算空闲 GPU 数量。#TODO:计算每个节点的空闲GPU，按优先同节点的原则分配
         occupied_gpus = set()#被占用的GPU下标列表
@@ -79,33 +97,41 @@ class DeepBoot(object): # Use DP to calculate
             occupied_gpus.update(gpu_list)
         free_gpus = [gpu for gpu in available_gpus if gpu not in occupied_gpus]#空闲的GPU下标列表
 
-        # 计算每个节点的空闲GPU数量
-        free_gpus_count = {}
-        for gpu in free_gpus:
-            node_idx = gpu // 4 #计算节点下标
-            if node_idx not in free_gpus_count:
-                free_gpus_count[node_idx] = 0
-            free_gpus_count[node_idx] += 1
+        # # 计算每个节点的空闲GPU数量
+        # free_gpus_count = {}
+        # for gpu in free_gpus:
+        #     node_idx = gpu // 4 #计算节点下标
+        #     if node_idx not in free_gpus_count:
+        #         free_gpus_count[node_idx] = 0
+        #     free_gpus_count[node_idx] += 1
+        #
+        # # 按照所在节点的空闲GPU数量和节点下标排序
+        # free_gpus.sort(key=lambda gpu: (free_gpus_count[gpu // 4], gpu))
+        #
+        # # 将 free_gpus 分为两部分：0~31 和 32~63
+        # part1 = [gpu for gpu in free_gpus if gpu <= 31]
+        # part2 = [gpu for gpu in free_gpus if gpu >= 32]
+        # # 合并两个部分，训练集群在前，推理集群在后
+        # free_gpus = part1 + part2
 
-        # 按照所在节点的空闲GPU数量和节点下标排序
-        free_gpus.sort(key=lambda gpu: (free_gpus_count[gpu // 4], gpu))
 
-        # 将 free_gpus 分为两部分：0~31 和 32~63
-        part1 = [gpu for gpu in free_gpus if gpu <= 31]
-        part2 = [gpu for gpu in free_gpus if gpu >= 32]
-        # 合并两个部分，训练集群在前，推理集群在后
-        free_gpus = part1 + part2
+        # 构建每个节点的剩余GPU数量
+        nodes_info = {}
+        for k in range(16):
+            nodes_info[k] = list()
+        for gpu in available_gpus:
+            nodes_info[gpu // 4].append((gpu))
 
         for job in job_keys:
             # 为每个任务分配 GPU 资源
             if num_replicas[job] > 0 and not allocations.get(job):#未分配到任务
                 allocations[job] = []  # 初始化分配列表
-                if num_replicas[job]<= len(free_gpus):
-                    allocations[job] = free_gpus[:num_replicas[job]]
-                    free_gpus = free_gpus[num_replicas[job]:]
-                else:
-                    print(f"资源不足，{job}需求{num_replicas[job]},free:{free_gpus}")
-        
+                while len(allocations[job]) < num_replicas[job]:
+                    gpu_need = num_replicas[job] - len(allocations[job])#还需要多少GPU
+                    node_id,gpu_list = self.select_gpus(gpu_need, nodes_info)#分配到的GPU下标列表
+                    num = min(len(gpu_list), gpu_need)#要用多少个GPU
+                    allocations[job].extend(gpu_list[:num])
+                    nodes_info[node_id] = gpu_list[num:]#更新nodes_infos
         return allocations
         
         #1、根据集群状态获取当前可用的GPU数量，训练集群GPU数量加上推理集群中空闲的GPU数量
@@ -119,6 +145,7 @@ class DeepBoot(object): # Use DP to calculate
 
     def allocate_elastic(self, prev_allocations, jobs, free_gpus): # 弹性资源分配函数
         num_gpus = len(free_gpus)  # 可用 GPU 总数量
+
         ws = [[]]  # 初始化任务资源矩阵
         vs = [[]]  # 初始化任务价值矩阵
 
@@ -138,6 +165,8 @@ class DeepBoot(object): # Use DP to calculate
 
                 if job_info.name not in prev_allocations or w != len(prev_allocations[job_info.name]):
                     speedup *= factor  # 应用惩罚因子
+
+
                 temp_v.append(speedup)
 
             ws.append(temp_w)
@@ -176,8 +205,15 @@ class DeepBoot(object): # Use DP to calculate
 
         train_jobs = [job for job in job_infos if not job.is_inference]
         infer_jobs = [job for job in job_infos if job.is_inference]
+        infer_job_names=[job.name for job in infer_jobs]
 
+        infer_alloc = {}
+        prev_train_alloc = {}
 
+        for jobinfo in infer_jobs:
+            infer_alloc[jobinfo.name] = jobinfo.job.allocation
+        for jobinfo in train_jobs:
+            prev_train_alloc[jobinfo.name] = jobinfo.job.allocation
         # 2. 初始化动态规划表,定义job的speedup函数
         #使用pollux的逻辑
 
@@ -190,8 +226,11 @@ class DeepBoot(object): # Use DP to calculate
         self._node_resources = np.zeros((len_nodes, 1), dtype=np.int64)
         for k in range(len_nodes):
             self._node_resources[k]=[4]
-
-
+        for job_name, alloc in infer_alloc.items():
+            if len(alloc)==0:
+                continue
+            node_id = alloc[0]//4
+            self._node_resources[node_id]-=1
 
         shares = self._job_resources / np.sum(self._node_resources, axis=0)#节点GPU总数
         self._dominant_share = np.amax(shares, axis=1)
@@ -201,9 +240,12 @@ class DeepBoot(object): # Use DP to calculate
         fair_replicas = np.ceil(1.0 / self._dominant_share / len(train_jobs))
         fair_nodes = np.ceil(len_nodes * self._dominant_share)
 
+        # print(f"shares:{shares} self._dominant_share:{self._dominant_share}")
+        #print(f"fair_replicas:{fair_replicas} fair_nodes:{fair_nodes}")
         # 更新任务的速度提升函数
         for job, num_nodes, num_replicas in zip(train_jobs, fair_nodes, fair_replicas):
             if not hasattr(job.speedup_fn, "_goodput_fn"):
+
                 job.speedup_fn = lambda n, r: r / num_replicas
                 continue
 
@@ -214,13 +256,7 @@ class DeepBoot(object): # Use DP to calculate
                 accumulation=job.speedup_fn._accumulation)[0]
         # 套用DeepBoot的逻辑
         allocations = {}
-        infer_alloc={}
-        prev_train_alloc={}
 
-        for jobinfo in infer_jobs:
-            infer_alloc[jobinfo.name]=jobinfo.job.allocation
-        for jobinfo in train_jobs:
-            prev_train_alloc[jobinfo.name]=jobinfo.job.allocation
         # 3. 获取最优分配方案
         free_gpus = self.get_free_gpus(gpus, infer_alloc)  # 减去推理集群被占用的资源
 
