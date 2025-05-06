@@ -16,7 +16,7 @@ class GPU:
         self.node_id = node_id
         self.available_space = 7  # 初始可用空间为7个实例
         self.running_jobs = []  # 当前运行的任务列表
-        #self.application_cache=set()
+
         self.app_cache = {}#字典，记录每个缓存开始保留的时间
         self.is_inference = is_inference  # 是否为推理GPU
         self.state = "FREE"  # 直接使用字符串表示状态
