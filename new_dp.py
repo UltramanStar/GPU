@@ -97,29 +97,12 @@ class DeepBoot(object): # Use DP to calculate
             occupied_gpus.update(gpu_list)
         free_gpus = [gpu for gpu in available_gpus if gpu not in occupied_gpus]#空闲的GPU下标列表
 
-        # # 计算每个节点的空闲GPU数量
-        # free_gpus_count = {}
-        # for gpu in free_gpus:
-        #     node_idx = gpu // 4 #计算节点下标
-        #     if node_idx not in free_gpus_count:
-        #         free_gpus_count[node_idx] = 0
-        #     free_gpus_count[node_idx] += 1
-        #
-        # # 按照所在节点的空闲GPU数量和节点下标排序
-        # free_gpus.sort(key=lambda gpu: (free_gpus_count[gpu // 4], gpu))
-        #
-        # # 将 free_gpus 分为两部分：0~31 和 32~63
-        # part1 = [gpu for gpu in free_gpus if gpu <= 31]
-        # part2 = [gpu for gpu in free_gpus if gpu >= 32]
-        # # 合并两个部分，训练集群在前，推理集群在后
-        # free_gpus = part1 + part2
-
 
         # 构建每个节点的剩余GPU数量
         nodes_info = {}
         for k in range(16):
             nodes_info[k] = list()
-        for gpu in available_gpus:
+        for gpu in free_gpus:
             nodes_info[gpu // 4].append((gpu))
 
         for job in job_keys:
@@ -132,6 +115,7 @@ class DeepBoot(object): # Use DP to calculate
                     num = min(len(gpu_list), gpu_need)#要用多少个GPU
                     allocations[job].extend(gpu_list[:num])
                     nodes_info[node_id] = gpu_list[num:]#更新nodes_infos
+
         return allocations
         
         #1、根据集群状态获取当前可用的GPU数量，训练集群GPU数量加上推理集群中空闲的GPU数量
