@@ -37,9 +37,9 @@ LOG.setLevel(logging.INFO)
 formatter = logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-ch = logging.StreamHandler()
-ch.setFormatter(formatter)
-LOG.addHandler(ch)
+# ch = logging.StreamHandler()
+# ch.setFormatter(formatter)
+# LOG.addHandler(ch)
 #一些策略选择的参数
 AFE=True
 PROTECT_TIMES = 1
@@ -631,7 +631,7 @@ class Cluster:
             return True
         #有排队中的推理任务等待时间过长，尝试回收资源
         if self.waiting_job:
-            LOG.info(f"当前时间{self.clock}，排队队列{self.waiting_job}")
+            LOG.info(f"当前时间{self.clock}，排队队列长度{len(self.waiting_job)}")
             if self.clock - max(self.waiting_job.values())>self.SLO_time:#有任务超过最大排队时间
                 LOG.info("case5:任务排队时间过长")
                 return True
@@ -650,15 +650,16 @@ class Cluster:
             for app in cache_to_remove:#遍历完再删除，不然形状变化会导致for循环无法继续
                 gpu.app_cache.pop(app, None)
 
-            if gpu.state=='RUNNING':#有推理任务在运行
+            if gpu.state == 'RUNNING':#有推理任务在运行
                 for job in gpu.running_jobs:
-                    if self.clock>job.evaluate_finish_time:#任务完成，释放
+                    if self.clock>job.evaluate_finish_time:#推理任务完成，释放
                         gpu.deallocate(job,job.requested_gpu,self.clock)
 
 
             if gpu.state=='PROTECT' and self.clock>gpu.protect_start_time+gpu.protect_time:#保留时间结束，释放预留资源
                 #gpu.application_cache=set()#清空缓存应用
-                gpu.state=='FREE'
+                gpu.state='FREE'
+
 
             #TODO：训练任务完成后，从BORROWED变成FREE，考虑是否保留缓存
 
@@ -786,9 +787,16 @@ class Cluster:
 
             job.job_step(seconds, self, interference=interference)
             if job.completion_time and job not in self.finished_jobs:
+                if not job.is_inference:
+                    for gpuID in job.allocation:
+                        gpu = self.gpus[gpuID]
+                        gpu.deallocate(job,job.requested_gpu,self.clock)
                 job.allocation = []
+
                 self.finished_jobs.add(job)
                 self.finish_job_set.add(job.name)
+                if not job.is_inference:
+                    print(f"{job.name}应该完成了")
         LOG.info("已完成的任务集合：%s", self.finish_job_set)
 
         #job都step完以后进行优化
@@ -832,7 +840,7 @@ class Cluster:
                     # 调用优化函数
                     new_alloc = self.infer_policy.optimize(job_infos, self.allocations, available_gpus,self.preemptible)
 
-                    #print("推理优化结果", new_alloc)
+                    print("推理优化结果", new_alloc)
 
                 available_gpus = self.get_idle_gpus()#含推理集群GPU
 
@@ -842,6 +850,7 @@ class Cluster:
                 if not new_alloc:
                     new_alloc.update(infer_alloc)
                 train_alloc = self.train_policy.optimize(job_infos, self.allocations, available_gpus)
+                print("训练优化结果：",train_alloc)
                 new_alloc.update(train_alloc)
 
                 #print("训练优化结果", new_alloc)
@@ -850,8 +859,8 @@ class Cluster:
                 available_gpus = self.get_infer_gpus()
                 # 调用优化函数
                 new_alloc = self.infer_policy.optimize(job_infos, self.allocations, available_gpus,self.preemptible)
-                #print("推理优化结果", new_alloc)
-
+                print("推理优化结果", new_alloc)
+            #print("优化结果", new_alloc)
             t2=time.time()
             optimize_time=t2-t1
             self.schedule_cost+=optimize_time
@@ -876,7 +885,8 @@ class Cluster:
                         else:#未分配到资源，开始排队
                             job.status='WAIT'
                             print(f"{job.name}未分配到资源，暂时排队")
-                            self.waiting_job[job.name]=self.current_time
+                            if job.name not in self.waiting_job:
+                                self.waiting_job[job.name]=self.current_time
                             continue
                     else:
                         # 计算训练任务的node_gpu_distribution
@@ -900,7 +910,7 @@ class Cluster:
                         self.jobs_finish_time.add(job.evaluate_finish_time)
 
             self.allocations = new_alloc#更新集群的整体分配情况
-            if self.current_time>max(self.jobs_submit_time):
+            if self.jobs_submit_time and self.current_time>max(self.jobs_submit_time):
                 self.infer_all_finish = True#所有推理任务均已部署，不用再定时调用推理集群策略
 
         # 更新推理GPU的状态
@@ -1032,7 +1042,7 @@ def simulate(args=None):
                         val["name"], val["epoch"], val["num_restarts"], val["batch_size"], val["placement"],
                         val["rescale_time"], val["start_execute_time"], val["evaluate_finish_time"], val["delay_time"],
                         val['completion_time']))
-        
+
         LOG.info("Completed jobs:")
         jct_dict = simulator.get_jcts()
         LOG.info(jct_dict)
@@ -1073,7 +1083,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
                         default="Workload/newSmall.csv")
-    parser.add_argument("--infer_policy", type=str, default="Cache",
+    parser.add_argument("--infer_policy", type=str, default="FirstFit",
                         choices=["FirstFit", "BestFit", "Cache", "Random"],
                         help="推理集群采用的策略")
     parser.add_argument("--min-nodes", type=int, default=16,
@@ -1082,7 +1092,7 @@ if __name__ == "__main__":
                         help="max number of nodes for cluster autoscaling")
     parser.add_argument("--train_interval", type=int, default=60,
                         help="训练集群固定调度周期")
-    parser.add_argument("--preemptible", type=int, default=0,
+    parser.add_argument("--preemptible", type=int, default=1,
                         help="是否强制回收")
     parser.add_argument("--protect_time", type=int, default=30,
                         help="GPU进入保护状态的时间")

@@ -31,7 +31,7 @@ class GPU:
         return self.available_space >= requested_gpu
 
     def allocate(self, job, requested_gpu, time):
-
+        print(f"任务{job.name}使用GPU{self.gpu_id}")
         self.available_space -= requested_gpu
 
         self.running_jobs.append(job)
@@ -45,7 +45,7 @@ class GPU:
                 self.state="BORROWED"
                 self.borrowed_start_time=time
 
-                #print(f"训练任务{job.name}借用GPU{self.gpu_id}")
+
         else:#训练集群GPU
             self.state='RUNNING'
 
@@ -58,7 +58,7 @@ class GPU:
             self.app_cache[job.app]=time
         if not job.is_inference:#训练任务
             self.state='FREE'#训练任务归还推理集群的GPU也是FREE
-
+            print(f"训练任务{job.name}释放GPU{self.gpu_id}")
             return
 
         if self.is_inference and not self.running_jobs:

@@ -91,6 +91,7 @@ class CacheFirst:
                         allocations[job.name] = [reclaim_gpu.gpu_id]
                         allocations[train_job.name].remove(reclaim_gpu.gpu_id)  # 修改对应训练任务的alloc
                         LOG.info(f"{job.name}排队时间过长，回收借给训练任务{train_job.name}的GPU{reclaim_gpu.gpu_id}")
+                        print(f"{job.name}排队时间过长，回收借给训练任务{train_job.name}的GPU{reclaim_gpu.gpu_id}")
                 else:
                     allocations[job.name] = []  # 无合适的GPU，需要等待
                     print(job.name, "需等待")

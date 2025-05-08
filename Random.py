@@ -68,9 +68,9 @@ class Random:
 
         #按提交时间排序
         self.remain_jobs = sorted(self.remain_jobs, key=lambda x: x.submit_time)
+        print(f"排序后的任务：{[job.name for job in self.remain_jobs]}")
         allocations=copy.deepcopy(prev_alloc)
         for job in self.remain_jobs:
-
             gpuID=self.select_gpu(job)
             if gpuID == -1:
                 if preemptible:
@@ -91,7 +91,7 @@ class Random:
                         LOG.info(f"{job.name}排队时间过长，回收借给训练任务{train_job.name}的GPU{reclaim_gpu.gpu_id}")
                 else:
                     allocations[job.name] = []  # 无合适的GPU，需要等待
-                    print(job.name, "需等待")
+                    #print(job.name, "需等待")
             else:
                 allocations[job.name]=[gpuID]
                 self.gpu_state[gpuID]-=job.requested_gpu

@@ -52,6 +52,7 @@ class FirstFit:
         """
         LOG.info("InferScheduler optimize")
         LOG.info("prev alloc: %s", prev_alloc)
+        print("传入allocation:", prev_alloc)
         self.get_gpu_state(infer_gpus)
         self.borrowed_gpus = [gpu for gpu in infer_gpus if gpu.state == 'BORROWED']  # 借出去的GPU
         #此处可添加排序策略开关
@@ -81,11 +82,15 @@ class FirstFit:
                         if len(reclaim_gpu.running_jobs) != 1:
                             print("回收时发现借出的GPU运行任务列表长度异常，长度为", len(reclaim_gpu.running_jobs))
                         train_job = reclaim_gpu.running_jobs[0]  # 理论上只会借给一个训练任务
+
                         self.gpu_state[reclaim_gpu.gpu_id] = 7
                         self.gpu_state[reclaim_gpu.gpu_id] -= job.requested_gpu
                         allocations[job.name] = [reclaim_gpu.gpu_id]
-                        allocations[train_job.name].remove(reclaim_gpu.gpu_id)  # 修改对应训练任务的alloc
                         LOG.info(f"{job.name}排队时间过长，回收借给训练任务{train_job.name}的GPU{reclaim_gpu.gpu_id}")
+                        print(f"{job.name}排队时间过长，回收借给训练任务{train_job.name}的GPU{reclaim_gpu.gpu_id}")
+                        allocations[train_job.name].remove(reclaim_gpu.gpu_id)  # 修改对应训练任务的alloc
+                        self.borrowed_gpus.remove(reclaim_gpu)# 回收的GPU移出BORROWED列表
+
 
                 else:
                     allocations[job.name]=[]#无合适的GPU，需要等待

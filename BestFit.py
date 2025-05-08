@@ -152,6 +152,7 @@ class BestFit:
                     train_job = gpu.running_jobs[0]  # 理论上只会借给一个训练任务
                     self.gpu_state[gpu.gpu_id] = 7
                     allocations[train_job.name].remove(gpu.gpu_id)
+                    self.borrowed_gpus.remove(gpu)
                     LOG.info(f"回收借给训练任务{train_job.name}的GPU{gpu.gpu_id}")
                 for job in long_wait:
                     gpuID = self.select_gpu(job)
