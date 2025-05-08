@@ -640,6 +640,7 @@ class Cluster:
     def update_cluster_states(self):  # simulate函数中每个时间步调用这个函数更新集群状态
 
         infer_gpus = self.get_infer_gpus()
+
         for gpu in infer_gpus:
             cache_to_remove = []#要删除的缓存
             for app,start_time in gpu.app_cache.items():
@@ -651,7 +652,9 @@ class Cluster:
                 gpu.app_cache.pop(app, None)
 
             if gpu.state == 'RUNNING':#有推理任务在运行
+
                 for job in gpu.running_jobs:
+
                     if self.clock>job.evaluate_finish_time:#推理任务完成，释放
                         gpu.deallocate(job,job.requested_gpu,self.clock)
 
@@ -660,8 +663,22 @@ class Cluster:
                 #gpu.application_cache=set()#清空缓存应用
                 gpu.state='FREE'
 
+    def check_allocations(self,allocations):#检查优化结果中，训练任务是否占用了推理集群的GPU
+        infer_gpus=set()
+        for k,v in allocations.items():
+            if "inference" in k:
+                for gpu in v:
+                    infer_gpus.add(gpu)
+        for k, v in allocations.items():
+            remove_gpu=[]
+            if "inference" not in k:
+                for gpu in v:
+                    if gpu in infer_gpus:
+                        remove_gpu.append(gpu)
+                for gpu in remove_gpu:
+                    v.remove(gpu)
+        return allocations
 
-            #TODO：训练任务完成后，从BORROWED变成FREE，考虑是否保留缓存
 
     def update_infer_states(self):  # 更新完优化的结果后，调用这个函数来更新推理集群状态
         current_time = self.current_time
@@ -691,10 +708,10 @@ class Cluster:
             usage[gpu.gpu_id]=7-gpu.available_space
             if gpu.state != 'FREE':
                 running_gpus+=1
-                if gpu.state=='RUNNING':
+                if gpu.state == 'RUNNING':
                     if gpu.available_space>0:
                         fragment_gpus+=1
-                        wasted_space+=7-gpu.available_space
+                        wasted_space += 7-gpu.available_space
 
         if running_gpus:
             frag_ratio=fragment_gpus/running_gpus
@@ -750,7 +767,7 @@ class Cluster:
         # 更新任务的allocation和集群的allocations
         job.allocation = alloc
         self.waiting_job.pop(job.name,None)
-        job.status="RUNNING"#该逻辑会覆盖排队任务的WAIT状态
+        job.status = "RUNNING"#该逻辑会覆盖排队任务的WAIT状态
 
 
     def cluster_step(self, seconds: int, train_interval=60, infer_interval=10):
@@ -849,7 +866,9 @@ class Cluster:
                 infer_alloc = {k: v for k, v in self.allocations.items() if k in infer_job_names}
                 if not new_alloc:
                     new_alloc.update(infer_alloc)
-                train_alloc = self.train_policy.optimize(job_infos, self.allocations, available_gpus)
+                    train_alloc = self.train_policy.optimize(job_infos, self.allocations, available_gpus)
+                else:
+                    train_alloc = self.train_policy.optimize(job_infos, new_alloc, available_gpus)#推理任务可能回收了GPU，传入new_alloc
                 print("训练优化结果：",train_alloc)
                 new_alloc.update(train_alloc)
 

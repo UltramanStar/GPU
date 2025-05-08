@@ -91,12 +91,11 @@ class DeepBoot(object): # Use DP to calculate
         job_keys = sorted(job_names, key=lambda k: num_replicas[k])
         # 过滤出副本数匹配的分配，这些任务分配不变
         allocations = {k: v for k, v in allocations.items() if len(v) == num_replicas[k]}
-        # 计算空闲 GPU 数量。#TODO:计算每个节点的空闲GPU，按优先同节点的原则分配
+        # 计算空闲 GPU 数量。
         occupied_gpus = set()#被占用的GPU下标列表
         for gpu_list in allocations.values():
             occupied_gpus.update(gpu_list)
         free_gpus = [gpu for gpu in available_gpus if gpu not in occupied_gpus]#空闲的GPU下标列表
-
 
         # 构建每个节点的剩余GPU数量
         nodes_info = {}
@@ -178,7 +177,6 @@ class DeepBoot(object): # Use DP to calculate
         # 1. 获取可用的 GPU,区分训练推理任务
 
         self.total_gpus=len(gpus)
-        #available_gpus = self.get_free_gpus(gpus, base_allocations)#把推理集群中能用的GPU算进来
 
         def ispinned(job):
             return not job.preemptible and base_allocations.get(job.name, []) != []
@@ -191,13 +189,12 @@ class DeepBoot(object): # Use DP to calculate
         infer_jobs = [job for job in job_infos if job.is_inference]
         infer_job_names=[job.name for job in infer_jobs]
 
-        infer_alloc = {}
-        prev_train_alloc = {}
+        infer_alloc = {k:v for k,v in base_allocations.items() if "inference" in k}
+        prev_train_alloc = {k:v for k,v in base_allocations.items() if "inference" not in k}
+        # print("训练优化函数提取infer_alloc",infer_alloc)
+        # print("训练优化函数提取train_alloc", prev_train_alloc)
 
-        for jobinfo in infer_jobs:
-            infer_alloc[jobinfo.name] = jobinfo.job.allocation
-        for jobinfo in train_jobs:
-            prev_train_alloc[jobinfo.name] = jobinfo.job.allocation
+
         # 2. 初始化动态规划表,定义job的speedup函数
         #使用pollux的逻辑
 
@@ -214,7 +211,7 @@ class DeepBoot(object): # Use DP to calculate
             if len(alloc)==0:
                 continue
             node_id = alloc[0]//4
-            self._node_resources[node_id]-=1
+            self._node_resources[node_id]-=1#TODO：当多个推理任务使用同一个GPU时，该计算方法不准确
 
         shares = self._job_resources / np.sum(self._node_resources, axis=0)#节点GPU总数
         self._dominant_share = np.amax(shares, axis=1)
@@ -224,8 +221,7 @@ class DeepBoot(object): # Use DP to calculate
         fair_replicas = np.ceil(1.0 / self._dominant_share / len(train_jobs))
         fair_nodes = np.ceil(len_nodes * self._dominant_share)
 
-        # print(f"shares:{shares} self._dominant_share:{self._dominant_share}")
-        #print(f"fair_replicas:{fair_replicas} fair_nodes:{fair_nodes}")
+
         # 更新任务的速度提升函数
         for job, num_nodes, num_replicas in zip(train_jobs, fair_nodes, fair_replicas):
             if not hasattr(job.speedup_fn, "_goodput_fn"):
@@ -243,7 +239,7 @@ class DeepBoot(object): # Use DP to calculate
 
         # 3. 获取最优分配方案
         free_gpus = self.get_free_gpus(gpus, infer_alloc)  # 减去推理集群被占用的资源
-
+        #print("free gpu",free_gpus)
         train_alloc = self.allocate_elastic(prev_train_alloc,train_jobs,free_gpus)
         allocations.update(train_alloc)
         return allocations
