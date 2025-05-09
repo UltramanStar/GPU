@@ -99,7 +99,8 @@ class DeepBoot(object): # Use DP to calculate
 
         # 构建每个节点的剩余GPU数量
         nodes_info = {}
-        for k in range(16):
+
+        for k in range(self.num_nodes):
             nodes_info[k] = list()
         for gpu in free_gpus:
             nodes_info[gpu // 4].append((gpu))
@@ -207,11 +208,14 @@ class DeepBoot(object): # Use DP to calculate
         self._node_resources = np.zeros((len_nodes, 1), dtype=np.int64)
         for k in range(len_nodes):
             self._node_resources[k]=[4]
-        for job_name, alloc in infer_alloc.items():
-            if len(alloc)==0:
-                continue
-            node_id = alloc[0]//4
-            self._node_resources[node_id]-=1#TODO：当多个推理任务使用同一个GPU时，该计算方法不准确
+        gpu_set = set()
+
+        for gpu_list in infer_alloc.values():
+            for gpu in gpu_list:
+                gpu_set.add(gpu)
+        for gpu_id in gpu_set:
+            node_id = gpu_id //4
+            self._node_resources[node_id]-=1
 
         shares = self._job_resources / np.sum(self._node_resources, axis=0)#节点GPU总数
         self._dominant_share = np.amax(shares, axis=1)
@@ -220,7 +224,6 @@ class DeepBoot(object): # Use DP to calculate
 
         fair_replicas = np.ceil(1.0 / self._dominant_share / len(train_jobs))
         fair_nodes = np.ceil(len_nodes * self._dominant_share)
-
 
         # 更新任务的速度提升函数
         for job, num_nodes, num_replicas in zip(train_jobs, fair_nodes, fair_replicas):

@@ -66,11 +66,11 @@ class BestFit:
         """
         # 将任务按所需GPU份数降序排列（7,4,3,2,1）
         sorted_tasks = sorted(remaining_jobs,
-                              key=lambda x: -x.required_gpu)
+                              key=lambda x: -x.requested_gpu)
         new_gpus = []  # 记录每个新GPU的剩余容量
 
         for task in sorted_tasks:
-            required = task.required_gpu
+            required = task.requested_gpu
             allocated = False
             # 尝试将任务放入已有新GPU
             for i in range(len(new_gpus)):

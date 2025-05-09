@@ -1008,8 +1008,8 @@ def simulate(args=None):
         policy = BestFit(args.SLO_time)
     else:
         policy = Random(args.SLO_time)
-    simulator = Cluster(infer_policy=policy,num_gpus=args.num_gpus,interference=args.interference,max_nodes=args.max_nodes,
-                        protect_time=args.protect_time,cache_time=args.cache_time,SLO_time=args.SLO_time,
+    simulator = Cluster(infer_policy=policy,num_nodes=args.min_nodes,num_gpus=args.num_gpus,interference=args.interference,
+                        max_nodes=args.max_nodes,protect_time=args.protect_time,cache_time=args.cache_time,SLO_time=args.SLO_time,
                         low_util=args.low_util, high_util=args.high_util)
     simulator.protect_time = args.protect_time
     simulator.load_jobs(args.workload)
@@ -1102,7 +1102,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
                         default="Workload/newSmall.csv")
-    parser.add_argument("--infer_policy", type=str, default="FirstFit",
+    parser.add_argument("--infer_policy", type=str, default="Random",
                         choices=["FirstFit", "BestFit", "Cache", "Random"],
                         help="推理集群采用的策略")
     parser.add_argument("--min-nodes", type=int, default=16,
@@ -1150,7 +1150,7 @@ if __name__ == "__main__":
                         help="low utility threshold")
     parser.add_argument("--high-util", type=float,
                         help="high utility threshold")
-    parser.add_argument("--output", type=str, default="test",
+    parser.add_argument("--output", type=str, default="Random-small",
                         help="path to output logs")
     parser.add_argument("--gpu_output", type=str,
                         help="path to output gpu usage info")
@@ -1217,12 +1217,12 @@ if __name__ == "__main__":
         summary["schedule_cost"]=schedule_cost
 
     #推理集群指标相关
-    inference_info["queueing_time"]=infer_queueing
-    inference_info["avgs_time"]=sum(inference_info["queueing_time"].values())/len(inference_info["queueing_time"])
-    inference_info["max_time"] =max(inference_info["queueing_time"].values())
-    num_queue=sum(1 for time in inference_info["queueing_time"].values() if time > 0)
-    inference_info["queue_tasks"] = num_queue
-    inference_info["queue_ratio"]=num_queue/ len(inference_info["queueing_time"]) if len(inference_info["queueing_time"])>0 else 0
+    # inference_info["queueing_time"]=infer_queueing
+    # inference_info["avgs_time"]=sum(inference_info["queueing_time"].values())/len(inference_info["queueing_time"])
+    # inference_info["max_time"] =max(inference_info["queueing_time"].values())
+    # num_queue=sum(1 for time in inference_info["queueing_time"].values() if time > 0)
+    # inference_info["queue_tasks"] = num_queue
+    # inference_info["queue_ratio"]=num_queue/ len(inference_info["queueing_time"]) if len(inference_info["queueing_time"])>0 else 0
 
 
     with open(args.output + "/summary.json", "w") as f:
