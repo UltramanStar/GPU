@@ -37,9 +37,9 @@ LOG.setLevel(logging.INFO)
 formatter = logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# ch = logging.StreamHandler()
-# ch.setFormatter(formatter)
-# LOG.addHandler(ch)
+ch = logging.StreamHandler()
+ch.setFormatter(formatter)
+LOG.addHandler(ch)
 #一些策略选择的参数
 AFE=True
 PROTECT_TIMES = 1
@@ -355,7 +355,7 @@ class Job:
             return first_delay
 class Cluster:
     def __init__(self,infer_policy, num_nodes=16,max_nodes=None, num_gpus=4, interference=0,protect_time=0,cache_time=0,
-                 SLO_time=15,low_util=None, high_util=None):
+                 SLO_time=10,low_util=None, high_util=None):
 
         self.jobs = []
         self.gpus = []
@@ -389,7 +389,7 @@ class Cluster:
         self.optimize_history=[]
         self.current_log = []
         self.gpu_util_dict = {"clock": [], "real_gpu_use": [], "real_running_gpu_use": [], "gpu_use": []}
-
+        self.reclaim_events=0#发生回收事件的次数
 
         self.gpu_usage_dict = {"clock": [], "usage": [
         ], "frag_ratio": [], "wasted_ratio": []}
@@ -850,13 +850,13 @@ class Cluster:
                 infer_schedule=False
                 if self.realtime and self.clock in self.jobs_submit_time:
                     infer_schedule=True
-                if not self.realtime and self.clock % infer_interval == 0:
+                if not self.realtime and self.clock % infer_interval == 0 and not self.infer_all_finish:
                     infer_schedule = True
                 if infer_schedule:#恰好也需要运行推理任务调度，则先调度推理任务
                     available_gpus = self.get_infer_gpus()
                     # 调用优化函数
-                    new_alloc = self.infer_policy.optimize(job_infos, self.allocations, available_gpus,self.preemptible)
-
+                    new_alloc,reclaim_event = self.infer_policy.optimize(job_infos, self.allocations, available_gpus,self.preemptible)
+                    self.reclaim_events+=reclaim_event
                     print("推理优化结果", new_alloc)
 
                 available_gpus = self.get_idle_gpus()#含推理集群GPU
@@ -877,9 +877,10 @@ class Cluster:
                 # 获取可用的推理GPU
                 available_gpus = self.get_infer_gpus()
                 # 调用优化函数
-                new_alloc = self.infer_policy.optimize(job_infos, self.allocations, available_gpus,self.preemptible)
+                new_alloc,reclaim_event = self.infer_policy.optimize(job_infos, self.allocations, available_gpus,self.preemptible)
                 print("推理优化结果", new_alloc)
-            #print("优化结果", new_alloc)
+                self.reclaim_events += reclaim_event
+            print("优化结果", new_alloc)
             t2=time.time()
             optimize_time=t2-t1
             self.schedule_cost+=optimize_time
@@ -1093,7 +1094,7 @@ def simulate(args=None):
     result_infer_queueing=simulator.get_infer_queueing_time()
 
     return simulator.logs, result_jcts, simulator.gpu_util_dict, simulator.metric_dict, simulator.gpu_usage_dict,\
-           result_infer_queueing,simulator.schedule_cost
+           result_infer_queueing,simulator.schedule_cost,simulator.reclaim_events
 
     #打印结果日志
 
@@ -1101,8 +1102,8 @@ if __name__ == "__main__":
     #输入args参数，待添加
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
-                        default="Workload/newSmall.csv")
-    parser.add_argument("--infer_policy", type=str, default="Random",
+                        default="Workload/small.csv")
+    parser.add_argument("--infer_policy", type=str, default="BestFit",
                         choices=["FirstFit", "BestFit", "Cache", "Random"],
                         help="推理集群采用的策略")
     parser.add_argument("--min-nodes", type=int, default=16,
@@ -1115,9 +1116,9 @@ if __name__ == "__main__":
                         help="是否强制回收")
     parser.add_argument("--protect_time", type=int, default=30,
                         help="GPU进入保护状态的时间")
-    parser.add_argument("--cache_time", type=int, default=60,
+    parser.add_argument("--cache_time", type=int, default=120,
                         help="缓存保留的时间")
-    parser.add_argument("--interference", type=float, default=0.0,
+    parser.add_argument("--interference", type=float, default=0.2,
                         help="干扰系数")
     parser.add_argument("--num-gpus", type=int, default=4,
                         help="number of GPUs per node")
@@ -1140,7 +1141,7 @@ if __name__ == "__main__":
     parser.add_argument("--protect_times", type=float, default=1.0,
                         help="1 means using Pollux to schedule Inference tasks")
 
-    parser.add_argument("--SLO_time", type=int,default=10,
+    parser.add_argument("--SLO_time", type=int,default=5,
                         help="允许的最大排队时间")
 
     parser.add_argument("--log_file", type=int, default=0,
@@ -1150,7 +1151,7 @@ if __name__ == "__main__":
                         help="low utility threshold")
     parser.add_argument("--high-util", type=float,
                         help="high utility threshold")
-    parser.add_argument("--output", type=str, default="Random-small",
+    parser.add_argument("--output", type=str, default="result/bestfit-small",
                         help="path to output logs")
     parser.add_argument("--gpu_output", type=str,
                         help="path to output gpu usage info")
@@ -1184,7 +1185,14 @@ if __name__ == "__main__":
         fh = logging.FileHandler(log_file)
         fh.setFormatter(formatter)
         LOG.addHandler(fh)
-
+    #记录参数设置
+    # 参数文件的路径
+    params_file_path = os.path.join(args.output, 'parameters.txt')
+    with open(params_file_path, 'w') as f:
+        for arg in vars(args):
+            attr_name = arg
+            attr_value = getattr(args, arg)
+            f.write(f"{attr_name}: {attr_value}\n")
     LOG.info("output: %s", args.output)
     LOG.info("single workload")
     # exit()
@@ -1193,11 +1201,13 @@ if __name__ == "__main__":
     args.usage_output=args.output+'/infer.log'
 
 
-    summary = {"jcts": {}, "avgs_train": {}, "avgs_infer":{},"schedule_cost":{}}
-    inference_info={"queueing_time":{}, "avgs_time":{},"max_time":{}, "queue_tasks":{}, "queue_ratio":{}}
-    logs, jct_dict, gpu_util_dict, metric_dict, infer_usage, infer_queueing,schedule_cost= simulate(args)#程序入口
+    summary = {"jcts": {}, "avgs_train": {}, "avgs_infer":{},"schedule_cost":{},"reclaim_events":{}}
+    inference_info={"queueing_time":{}, "avgs_time":{},"max_time":{},
+                    "queue_tasks":{}, "queue_ratio":{}, "timeout_tasks":{}, "timeout_ratio":{}}
+    logs, jct_dict, gpu_util_dict, metric_dict, infer_usage, infer_queueing,schedule_cost,reclaim_events= simulate(args)#程序入口
     #JCT相关
     summary["jcts"] = jct_dict
+    summary["reclaim_events"] = reclaim_events
     if len(jct_dict) == 0:
         summary["avgs_train"] = 0
     else:
@@ -1217,12 +1227,16 @@ if __name__ == "__main__":
         summary["schedule_cost"]=schedule_cost
 
     #推理集群指标相关
-    # inference_info["queueing_time"]=infer_queueing
-    # inference_info["avgs_time"]=sum(inference_info["queueing_time"].values())/len(inference_info["queueing_time"])
-    # inference_info["max_time"] =max(inference_info["queueing_time"].values())
-    # num_queue=sum(1 for time in inference_info["queueing_time"].values() if time > 0)
-    # inference_info["queue_tasks"] = num_queue
-    # inference_info["queue_ratio"]=num_queue/ len(inference_info["queueing_time"]) if len(inference_info["queueing_time"])>0 else 0
+    inference_info["queueing_time"]=infer_queueing
+    inference_info["avgs_time"]=sum(inference_info["queueing_time"].values())/len(inference_info["queueing_time"])
+    inference_info["max_time"] =max(inference_info["queueing_time"].values())
+    num_queue=sum(1 for time in inference_info["queueing_time"].values() if time > 0)
+    num_over=sum(1 for time in inference_info["queueing_time"].values() if time > args.SLO_time)
+    inference_info["queue_tasks"] = num_queue
+    inference_info["queue_ratio"]=num_queue / len(inference_info["queueing_time"]) if len(inference_info["queueing_time"])>0 else 0
+    inference_info["timeout_tasks"] = num_over
+    inference_info["timeout_ratio"] = num_over / len(inference_info["queueing_time"]) if len(
+        inference_info["queueing_time"]) > 0 else 0
 
 
     with open(args.output + "/summary.json", "w") as f:

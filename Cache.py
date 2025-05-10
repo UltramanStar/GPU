@@ -44,7 +44,6 @@ class CacheFirst:
                 break
         return gpuID
 
-
     def optimize(self, job_infos, prev_alloc, infer_gpus,preemptible=False) :
         """
         批量优化推理任务分配
@@ -70,6 +69,7 @@ class CacheFirst:
         #按提交时间排序
         self.remain_jobs = sorted(self.remain_jobs, key=lambda x: x.submit_time)
         allocations=copy.deepcopy(prev_alloc)
+        reclaim_event=0
         for job in self.remain_jobs:
 
             gpuID=self.select_gpu(job,infer_gpus)
@@ -93,6 +93,7 @@ class CacheFirst:
                         LOG.info(f"{job.name}排队时间过长，回收借给训练任务{train_job.name}的GPU{reclaim_gpu.gpu_id}")
                         print(f"{job.name}排队时间过长，回收借给训练任务{train_job.name}的GPU{reclaim_gpu.gpu_id}")
                         self.borrowed_gpus.remove(reclaim_gpu)  # 回收的GPU移出BORROWED列表
+                        reclaim_event+=1
                 else:
                     allocations[job.name] = []  # 无合适的GPU，需要等待
                     print(job.name, "需等待")
@@ -100,4 +101,4 @@ class CacheFirst:
                 allocations[job.name]=[gpuID]
                 self.gpu_state[gpuID]-=job.requested_gpu
 
-        return allocations
+        return allocations,reclaim_event

@@ -45,7 +45,7 @@ class BestFit:
         gpu_info = []
         for gpu_id in gpu_list:
             # 剩余空间最少的优先（因此用负数表示，以便升序排序时等同于降序）
-            remaining_space = -self.gpu_state[gpu_id]
+            remaining_space = self.gpu_state[gpu_id]
             # 检查是否有缓存（True/False）
             has_cache = job.job.app in self.gpu_cache.get(gpu_id, set())
             # 添加到列表中，用于排序
@@ -55,7 +55,7 @@ class BestFit:
         # 然后按是否有缓存（没有缓存的排在后面，因此用not has_cache，False排在True前面）
         # 最后按GPU下标升序
         gpu_info.sort()
-
+        print("gpu_info排序后：", gpu_info)
         # 返回排序后第一个GPU的ID
         return gpu_info[0][2]
 
@@ -110,7 +110,7 @@ class BestFit:
                                   key=lambda x: (-x.requested_gpu,x.submit_time))#负号用于降序排列
         allocations=copy.deepcopy(prev_alloc)
 
-
+        reclaim_event=0
         #1、先处理7份GPU的任务中找得到缓存的，尽量分配到有缓存的
         remove_jobs=[]
         for job in self.remain_jobs:
@@ -136,7 +136,6 @@ class BestFit:
                 if preemptible:
                     wait_jobs.append(job)
                 else:
-
                     print(job.name, "需等待")
             else:
                 allocations[job.name] = [gpuID]
@@ -148,6 +147,7 @@ class BestFit:
             if long_wait:
                 additinoal_need=self.get_num_reclaim(long_wait)
                 reclaim=self.borrowed_gpus[:max(additinoal_need,len(self.borrowed_gpus))]#回收的GPU列表
+                reclaim_event+=len(reclaim)
                 for gpu in reclaim:
                     train_job = gpu.running_jobs[0]  # 理论上只会借给一个训练任务
                     self.gpu_state[gpu.gpu_id] = 7
@@ -162,5 +162,5 @@ class BestFit:
                     else:
                         allocations[job.name] = [gpuID]
                         self.gpu_state[gpuID] -= job.requested_gpu
-        return allocations
+        return allocations,reclaim_event
 

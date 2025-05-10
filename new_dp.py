@@ -16,7 +16,7 @@ class DeepBoot(object): # Use DP to calculate
         self.jobs = None
         self.num_nodes = 16
         self.gpu_each_node=4
-        self.total_gpus = None#GPU总数
+        self.total_gpus = None #GPU总数
         self.sched_train = True
         self.infer_schedule = True
 
@@ -64,9 +64,9 @@ class DeepBoot(object): # Use DP to calculate
 
     def select_gpus(self,gpu_need,nodes_info):
         '''
-                num_replica: gpus needed by current tasks
-                free_gpus: free gpus in each node
-                '''
+                gpu_need: gpus needed by current tasks
+                nodes_info: free gpus in each node
+        '''
 
         max_idle_node = max(nodes_info, key=lambda k: len(nodes_info[k]))
 
