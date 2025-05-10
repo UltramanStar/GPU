@@ -55,7 +55,7 @@ class BestFit:
         # 然后按是否有缓存（没有缓存的排在后面，因此用not has_cache，False排在True前面）
         # 最后按GPU下标升序
         gpu_info.sort()
-        print("gpu_info排序后：", gpu_info)
+
         # 返回排序后第一个GPU的ID
         return gpu_info[0][2]
 
@@ -81,7 +81,7 @@ class BestFit:
             # 无法放入已有GPU时，创建新GPU
             if not allocated:
                 new_gpus.append(7 - required)  # 新GPU的剩余空间
-
+            print("回收GPU数量",len(new_gpus))
         return len(new_gpus)
 
     def optimize(self, job_infos, prev_alloc, infer_gpus,preemptible=False) :
@@ -143,10 +143,11 @@ class BestFit:
                 self.gpu_cache[gpuID].add(job.job.app)#添加缓存，便于相同应用的任务分配到一起
         #3、如果没有满足条件的GPU，说明资源分配完了，选择排队时间较长的任务，计算强制回收的GPU数量，再重复上述步骤
         if wait_jobs and len(self.borrowed_gpus)>0:#允许抢占并且有任务没分配到资源,回收资源
-            long_wait=[job for job in wait_jobs if job.age <= self.max_wait_time]#长时间排队的推理任务
+            long_wait=[job for job in wait_jobs if job.age >= self.max_wait_time]#长时间排队的推理任务
             if long_wait:
+                print("长时间等待的任务数量：",len(long_wait))
                 additinoal_need=self.get_num_reclaim(long_wait)
-                reclaim=self.borrowed_gpus[:max(additinoal_need,len(self.borrowed_gpus))]#回收的GPU列表
+                reclaim=self.borrowed_gpus[:min(additinoal_need,len(self.borrowed_gpus))]#回收的GPU列表
                 reclaim_event+=len(reclaim)
                 for gpu in reclaim:
                     train_job = gpu.running_jobs[0]  # 理论上只会借给一个训练任务
@@ -154,6 +155,7 @@ class BestFit:
                     allocations[train_job.name].remove(gpu.gpu_id)
                     self.borrowed_gpus.remove(gpu)
                     LOG.info(f"回收借给训练任务{train_job.name}的GPU{gpu.gpu_id}")
+                    print(f"回收借给训练任务{train_job.name}的GPU{gpu.gpu_id},reclaim次数：{reclaim_event}")
                 for job in long_wait:
                     gpuID = self.select_gpu(job)
                     if gpuID == -1:

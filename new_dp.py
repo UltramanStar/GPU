@@ -67,6 +67,8 @@ class DeepBoot(object): # Use DP to calculate
                 gpu_need: gpus needed by current tasks
                 nodes_info: free gpus in each node
         '''
+        # 将节点分为训练集群（前8个）和推理集群（后8个）
+
 
         max_idle_node = max(nodes_info, key=lambda k: len(nodes_info[k]))
 
@@ -104,17 +106,24 @@ class DeepBoot(object): # Use DP to calculate
             nodes_info[k] = list()
         for gpu in free_gpus:
             nodes_info[gpu // 4].append((gpu))
-
+        train_nodes = {k: v for k, v in nodes_info.items() if k < self.num_nodes/2}
+        inference_nodes = {k: v for k, v in nodes_info.items() if k >= self.num_nodes/2}
         for job in job_keys:
             # 为每个任务分配 GPU 资源
             if num_replicas[job] > 0 and not allocations.get(job):#未分配到任务
                 allocations[job] = []  # 初始化分配列表
                 while len(allocations[job]) < num_replicas[job]:
                     gpu_need = num_replicas[job] - len(allocations[job])#还需要多少GPU
-                    node_id,gpu_list = self.select_gpus(gpu_need, nodes_info)#分配到的GPU下标列表
+                    node_id,gpu_list = self.select_gpus(gpu_need, train_nodes)#分配到的GPU下标列表
+                    if len(gpu_list)==0:#借用推理集群的GPU
+                        node_id, gpu_list = self.select_gpus(gpu_need, inference_nodes)
                     num = min(len(gpu_list), gpu_need)#要用多少个GPU
                     allocations[job].extend(gpu_list[:num])
-                    nodes_info[node_id] = gpu_list[num:]#更新nodes_infos
+                    # 更新nodes_infos
+                    if node_id < self.num_nodes/2:
+                        train_nodes[node_id] = gpu_list[num:]
+                    else:
+                        inference_nodes[node_id] = gpu_list[num:]
 
         return allocations
         

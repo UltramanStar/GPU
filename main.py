@@ -37,9 +37,9 @@ LOG.setLevel(logging.INFO)
 formatter = logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-ch = logging.StreamHandler()
-ch.setFormatter(formatter)
-LOG.addHandler(ch)
+# ch = logging.StreamHandler()
+# ch.setFormatter(formatter)
+# LOG.addHandler(ch)
 #一些策略选择的参数
 AFE=True
 PROTECT_TIMES = 1
@@ -1103,7 +1103,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
                         default="Workload/small.csv")
-    parser.add_argument("--infer_policy", type=str, default="BestFit",
+    parser.add_argument("--infer_policy", type=str, default="Random",
                         choices=["FirstFit", "BestFit", "Cache", "Random"],
                         help="推理集群采用的策略")
     parser.add_argument("--min-nodes", type=int, default=16,
@@ -1151,7 +1151,7 @@ if __name__ == "__main__":
                         help="low utility threshold")
     parser.add_argument("--high-util", type=float,
                         help="high utility threshold")
-    parser.add_argument("--output", type=str, default="result/bestfit-small",
+    parser.add_argument("--output", type=str, default="result/random-small",
                         help="path to output logs")
     parser.add_argument("--gpu_output", type=str,
                         help="path to output gpu usage info")
