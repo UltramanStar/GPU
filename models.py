@@ -24,11 +24,8 @@ class GPU:
         self.borrowed_start_time = 0  # 保护状态开始的时间
         self.save_time=save_time#缓存的保留时间
         self.protect_time=protect_time#GPU保留给推理任务的时间
-        self.protect_level=1#保护等级
+        self.protect_level=0#保护等级
         self.restart_times=None#训练任务重启次数，暂不考虑
-
-    def can_allocate(self, requested_gpu: int) -> bool:
-        return self.available_space >= requested_gpu
 
     def allocate(self, job, requested_gpu, time):
         #print(f"任务{job.name}使用GPU{self.gpu_id}")
@@ -39,12 +36,12 @@ class GPU:
         if self.is_inference:
             if job.is_inference:
                 self.state = "RUNNING"
-
+                if self.protect_level < 7:
+                    self.protect_level+=1
                 #任务未结束时持续保存缓存
             else:#训练任务使用推理集群的GPU
                 self.state="BORROWED"
                 self.borrowed_start_time=time
-
 
         else:#训练集群GPU
             self.state='RUNNING'
@@ -52,7 +49,10 @@ class GPU:
     def deallocate(self, job: 'Job', requested_gpu, time):
         #print(f"任务{job.name}释放GPU{self.gpu_id}")
         self.available_space += requested_gpu
-        self.running_jobs.remove(job)
+        if job in self.running_jobs:#屏蔽异常情况
+            self.running_jobs.remove(job)
+        else:
+            print(f"试图异常移除任务{job.name}，当前运行列表{self.running_jobs}")
         remain_app=set(temp_job.app for temp_job in self.running_jobs)
         if job.app not in remain_app:#没有同类应用继续运行，则缓存保留时间开始倒计时
             self.app_cache[job.app]=time

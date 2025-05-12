@@ -81,7 +81,7 @@ class BestFit:
             # 无法放入已有GPU时，创建新GPU
             if not allocated:
                 new_gpus.append(7 - required)  # 新GPU的剩余空间
-            print("回收GPU数量",len(new_gpus))
+
         return len(new_gpus)
 
     def optimize(self, job_infos, prev_alloc, infer_gpus,preemptible=False) :
@@ -155,7 +155,8 @@ class BestFit:
                     allocations[train_job.name].remove(gpu.gpu_id)
                     self.borrowed_gpus.remove(gpu)
                     LOG.info(f"回收借给训练任务{train_job.name}的GPU{gpu.gpu_id}")
-                    print(f"回收借给训练任务{train_job.name}的GPU{gpu.gpu_id},reclaim次数：{reclaim_event}")
+                    print(f"回收借给训练任务{train_job.name}的GPU{gpu.gpu_id}")
+
                 for job in long_wait:
                     gpuID = self.select_gpu(job)
                     if gpuID == -1:

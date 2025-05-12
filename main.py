@@ -388,7 +388,7 @@ class Cluster:
         self.logs = []
         self.optimize_history=[]
         self.current_log = []
-        self.gpu_util_dict = {"clock": [], "real_gpu_use": [], "real_running_gpu_use": [], "gpu_use": []}
+        self.gpu_util_dict = {"clock": [], "real_gpu_use": [], "real_running_gpu_use": [], "gpu_use": [],"infer_use":[]}
         self.reclaim_events=0#发生回收事件的次数
 
         self.gpu_usage_dict = {"clock": [], "usage": [
@@ -442,22 +442,24 @@ class Cluster:
         real_used_gpu = 0
         used_gpu = 0
         real_running_gpu = 0
-        #待修改计算方式
+        infer_use=0#推理集群中运行推理任务的GPU
+        #TODO:待修改计算方式
 
         for job in self.jobs:
             if job.submit_time <= self.current_time and job.completion_time is None:
-                # 是训练任务:
 
-                if job.current_rescale_time == 0:
+                if job.current_rescale_time == 0 and not job.is_inference:
                     real_used_gpu += sum(job.placement)
+                    real_running_gpu += sum(job.placement)
+                if not job.is_inference:  # 是训练任务:
+                    used_gpu += sum(job.placement)
 
-                    if not job.is_inference:
-                        real_running_gpu += sum(job.placement)
-                used_gpu += sum(job.placement)
-
-            job.current_rescale_time = max(job.current_rescale_time - 1, 0)
-
-        return real_used_gpu, real_running_gpu, used_gpu
+            job.current_rescale_time = max(job.current_rescale_time - 1, 0)#不为0表示正在启动中
+        for gpu in self.get_infer_gpus():
+            if gpu.state=='RUNNING':
+                infer_use+=1
+                used_gpu +=1
+        return real_used_gpu, real_running_gpu, used_gpu, infer_use
     def calculate_goodput_and_speedup(self):
         speedups = []
         goodputs = []
@@ -658,9 +660,9 @@ class Cluster:
                     if self.clock>job.evaluate_finish_time:#推理任务完成，释放
                         gpu.deallocate(job,job.requested_gpu,self.clock)
 
-
+            #if gpu.state == 'PROTECT' and self.clock > PROTECT_TIME+gpu.protect_level*15:
             if gpu.state=='PROTECT' and self.clock>gpu.protect_start_time+gpu.protect_time:#保留时间结束，释放预留资源
-                #gpu.application_cache=set()#清空缓存应用
+                gpu.protect_level=0#重置保护等级
                 gpu.state='FREE'
 
     def check_allocations(self,allocations):#检查优化结果中，训练任务是否占用了推理集群的GPU
@@ -1020,7 +1022,7 @@ def simulate(args=None):
     while not simulator.all_complete():
         simulator.clock += 1
         #计算指标，添加日志记录
-        real_gpu_util, real_running_gpu_util, gpu_util = simulator.calculate_real_gpu_usage()
+        real_gpu_util, real_running_gpu_util, gpu_util, infer_use = simulator.calculate_real_gpu_usage()
         infer_gpu_usage,frag_ratio,wasted_ratio = simulator.check_infer_gpu_usage()
         #If calculate the goodput and speedup in the whole process, use follow code
         # sum_goodput, avg_goodput, sum_speedup, avg_speedup = simulator.calculate_goodput_and_speedup()
@@ -1036,6 +1038,7 @@ def simulate(args=None):
         simulator.gpu_util_dict['real_running_gpu_use'].append(
             real_running_gpu_util)
         simulator.gpu_util_dict['gpu_use'].append(gpu_util)
+        simulator.gpu_util_dict['infer_use'].append(infer_use)
 
         simulator.gpu_usage_dict['clock'].append(simulator.clock)
         #simulator.gpu_usage_dict['usage'].append(infer_gpu_usage)
@@ -1102,8 +1105,8 @@ if __name__ == "__main__":
     #输入args参数，待添加
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
-                        default="Workload/small.csv")
-    parser.add_argument("--infer_policy", type=str, default="Random",
+                        default="Workload/large.csv")
+    parser.add_argument("--infer_policy", type=str, default="FirstFit",
                         choices=["FirstFit", "BestFit", "Cache", "Random"],
                         help="推理集群采用的策略")
     parser.add_argument("--min-nodes", type=int, default=16,
@@ -1132,7 +1135,7 @@ if __name__ == "__main__":
     parser.add_argument("--AFE", type=int, default=1,
                         help="whether AFE optimize elastic")
 
-    parser.add_argument("--infer_interval", type=int, default=10,
+    parser.add_argument("--infer_interval", type=int, default=8,
                         help="推理集群每隔多久调用一次")
 
     parser.add_argument("--REPAIR_TRAIN", type=int, default=1,
@@ -1151,7 +1154,7 @@ if __name__ == "__main__":
                         help="low utility threshold")
     parser.add_argument("--high-util", type=float,
                         help="high utility threshold")
-    parser.add_argument("--output", type=str, default="result/random-small",
+    parser.add_argument("--output", type=str, default="result/FirstFit-regular-large",
                         help="path to output logs")
     parser.add_argument("--gpu_output", type=str,
                         help="path to output gpu usage info")
@@ -1166,7 +1169,7 @@ if __name__ == "__main__":
     REPAIR_TRAIN = args.REPAIR_TRAIN
 
     ARYL = args.ARYL
-    PROTECT_TIMES = args.protect_times
+    PROTECT_TIME = min(args.protect_times-15,0)
     NUM_NODE = args.min_nodes
 
     #创建文件夹
