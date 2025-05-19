@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import List, Dict, Optional
-from old_application import APPLICATIONS, APPLICATIONS_DELAY, FIRST_DELAY, NEXT_DELAY
+from application import APPLICATIONS, APPLICATIONS_DELAY, FIRST_DELAY, NEXT_DELAY
 
 def app_trans(app_name):
     app_name_split = app_name.split('-')

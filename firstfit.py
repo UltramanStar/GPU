@@ -73,7 +73,7 @@ class FirstFit:
             if gpuID == -1:
                 if preemptible:
                     #print(f"{job.name}未找到合适GPU,已排队{job.age}")
-                    if job.age <= self.max_wait_time or len(self.borrowed_gpus) == 0:#未超过容忍的排队时间
+                    if job.age <= job.job.max_wait or len(self.borrowed_gpus) == 0:#未超过容忍的排队时间
                         allocations[job.name] = []  # 无合适的GPU，需要等待
                     else:  # 回收一个GPU
                         if len(self.borrowed_gpus)==0:#没有GPU能回收了

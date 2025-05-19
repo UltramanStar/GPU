@@ -32,7 +32,7 @@ class CacheFirst:
             self.gpu_state[gpu.gpu_id]=gpu.available_space
 
 #选择GPU的策略：先找缓存
-    def select_gpu(self,job,infer_gpus):#为每个任务选择gpu，TODO：回收逻辑，优先回收缓存相同的训练任务占用的GPU
+    def select_gpu(self,job,infer_gpus):#为每个任务选择gpu
         gpuID=-1
         for gpu in infer_gpus:#先看看是否存在有缓存且能放下的gpu
             if job.job.app in gpu.app_cache:
@@ -76,7 +76,7 @@ class CacheFirst:
             if gpuID == -1:
                 if preemptible:
                     # print(f"{job.name}未找到合适GPU,已排队{job.age}")
-                    if job.age <= self.max_wait_time or len(self.borrowed_gpus) == 0:  # 未超过容忍的排队时间
+                    if job.age <= job.job.max_wait or len(self.borrowed_gpus) == 0:  # 未超过容忍的排队时间
                         allocations[job.name] = []  # 无合适的GPU，需要等待
                     else:  # 回收一个GPU
                         if len(self.borrowed_gpus)==0:

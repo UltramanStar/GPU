@@ -51,11 +51,10 @@ class BestFit:
             # 添加到列表中，用于排序
             gpu_info.append((remaining_space, not has_cache, gpu_id))
 
-        # 排序：首先按剩余空间（升序，因remaining_space是负数，所以升序等同于按剩余空间降序）
+
         # 然后按是否有缓存（没有缓存的排在后面，因此用not has_cache，False排在True前面）
         # 最后按GPU下标升序
         gpu_info.sort()
-
         # 返回排序后第一个GPU的ID
         return gpu_info[0][2]
 
@@ -143,7 +142,7 @@ class BestFit:
                 self.gpu_cache[gpuID].add(job.job.app)#添加缓存，便于相同应用的任务分配到一起
         #3、如果没有满足条件的GPU，说明资源分配完了，选择排队时间较长的任务，计算强制回收的GPU数量，再重复上述步骤
         if wait_jobs and len(self.borrowed_gpus)>0:#允许抢占并且有任务没分配到资源,回收资源
-            long_wait=[job for job in wait_jobs if job.age >= self.max_wait_time]#长时间排队的推理任务
+            long_wait=[job for job in wait_jobs if job.age >= job.job.max_wait]#长时间排队的推理任务
             if long_wait:
                 print("长时间等待的任务数量：",len(long_wait))
                 additinoal_need=self.get_num_reclaim(long_wait)

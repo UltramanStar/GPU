@@ -37,9 +37,9 @@ LOG.setLevel(logging.INFO)
 formatter = logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# ch = logging.StreamHandler()
-# ch.setFormatter(formatter)
-# LOG.addHandler(ch)
+ch = logging.StreamHandler()
+ch.setFormatter(formatter)
+LOG.addHandler(ch)
 #一些策略选择的参数
 AFE=True
 PROTECT_TIMES = 1
@@ -60,7 +60,7 @@ def app_trans(app_name):
         
 class Job:
     def __init__(self, name: str, time: int, application: str, num_replicas=1,
-                 requested_gpu=7, batch_size=None, duration=0, num_task=0):
+                 requested_gpu=7, batch_size=None, duration=0, num_task=0,SLO_rate=0):
         self.name = name
         self.submit_time = time#提交时间
         self.application = APPLICATIONS[app_trans(application)]
@@ -69,6 +69,8 @@ class Job:
         self.requested_gpu = requested_gpu
         self.target_batch_size = batch_size#动态优化的批量大小，数据集会提供初始大小
         self.duration = duration
+        self.max_wait = 0
+        self.SLO_rate=SLO_rate
         self.num_task = num_task#推理请求数，暂不做处理
         self.is_inference = name.startswith('inference')#是否是推理任务
         self.status="START"
@@ -105,6 +107,7 @@ class Job:
             self.target_batch_size = 1
             self.target_num_replicas = 1
             self.atomic_bsz = 1
+            self.max_wait=round(self.duration*self.SLO_rate)
 
 
 
@@ -355,7 +358,7 @@ class Job:
             return first_delay
 class Cluster:
     def __init__(self,infer_policy, num_nodes=16,max_nodes=None, num_gpus=4, interference=0,protect_time=0,cache_time=0,
-                 SLO_time=10,low_util=None, high_util=None):
+                 SLO_rate=0.5,low_util=None, high_util=None):
 
         self.jobs = []
         self.gpus = []
@@ -369,11 +372,13 @@ class Cluster:
         self.finished_jobs = set()  # 记录已完成的任务
         self.finish_job_set = set()  # 记录已完成的任务名
         self.interference = interference
-        self.SLO_time=SLO_time
+        #self.SLO_time=SLO_time
+        self.SLO_rate=SLO_rate
         self.low_util = low_util  # 利用率下界
         self.high_util = high_util  # 利用率上界
         self.allocations = {}  # 记录所有任务的分配情况，键为任务名，值为GPU下标列表
         self.jobs_submit_time = set()
+        self.jobs_SLO_time={}#记录所有任务允许等待的最大时间
         self.waiting_job={}
         self.jobs_finish_time=set()#记录完成时间的集合
         # 初始化策略
@@ -433,6 +438,13 @@ class Cluster:
     def get_infer_queueing_time(self):
         return {
             val["name"]: val["start_execute_time"] - val["submit_time"]
+            # for val in self.logs[-1]["submitted_jobs"]
+            for val in self.current_log["submitted_jobs"]
+            if val["start_execute_time"] is not None and val["name"].startswith("inference")
+        }
+    def get_SLO_time(self):
+        return {
+            val["name"]: val["max_wait_time"]
             # for val in self.logs[-1]["submitted_jobs"]
             for val in self.current_log["submitted_jobs"]
             if val["start_execute_time"] is not None and val["name"].startswith("inference")
@@ -540,13 +552,14 @@ class Cluster:
                 requested_gpu=row.requested_gpu,
 
                 duration=row.duration,
-
+                SLO_rate=self.SLO_rate
             )
             if job.application.name == "ncf":
                 job.target_batch_size = 32768
             self.jobs.append(job)
             if job.is_inference:
                 self.jobs_submit_time.add(job.submit_time)
+                self.jobs_SLO_time[job.name] = job.max_wait#记录每个任务的最大排队时间
 
 
     def is_valid_job(self,job):
@@ -634,9 +647,13 @@ class Cluster:
         #有排队中的推理任务等待时间过长，尝试回收资源
         if self.waiting_job:
             LOG.info(f"当前时间{self.clock}，排队队列长度{len(self.waiting_job)}")
-            if self.clock - max(self.waiting_job.values())>self.SLO_time:#有任务超过最大排队时间
-                LOG.info("case5:任务排队时间过长")
-                return True
+            for job,waiting_time in self.waiting_job.items():
+                if self.clock - waiting_time > self.jobs_SLO_time[job]:#有任务超过最大排队时间
+                    LOG.info("case5:任务排队时间过长")
+                    return True
+            # if self.clock - max(self.waiting_job.values())>self.SLO_time:#有任务超过最大排队时间
+            #     LOG.info("case5:任务排队时间过长")
+            #     return True
         return False
 
     def update_cluster_states(self):  # simulate函数中每个时间步调用这个函数更新集群状态
@@ -956,6 +973,7 @@ class Cluster:
                     "accum_steps": job.accum_steps,
                     "submit_time": job.submit_time,
                     "completion_time": job.completion_time,
+                    "max_wait_time":job.max_wait,
                     "grad_params": job.grad_params,
                     "rescale_time": job.rescale_time,
                     "run_time": job.run_time,
@@ -1004,15 +1022,15 @@ def simulate(args=None):
 
     # 根据infer_policy初始化对应的策略类
     if args.infer_policy == "Cache":
-        policy = CacheFirst(args.SLO_time)
+        policy = CacheFirst()
     elif args.infer_policy == "FirstFit":
-        policy = FirstFit(args.SLO_time)
+        policy = FirstFit()
     elif args.infer_policy == "BestFit":
-        policy = BestFit(args.SLO_time)
+        policy = BestFit()
     else:
-        policy = Random(args.SLO_time)
+        policy = Random()
     simulator = Cluster(infer_policy=policy,num_nodes=args.min_nodes,num_gpus=args.num_gpus,interference=args.interference,
-                        max_nodes=args.max_nodes,protect_time=args.protect_time,cache_time=args.cache_time,SLO_time=args.SLO_time,
+                        max_nodes=args.max_nodes,protect_time=args.protect_time,cache_time=args.cache_time,SLO_rate=args.SLO_rate,
                         low_util=args.low_util, high_util=args.high_util)
     simulator.protect_time = args.protect_time
     simulator.load_jobs(args.workload)
@@ -1095,9 +1113,10 @@ def simulate(args=None):
 
     result_jcts = simulator.get_jcts()
     result_infer_queueing=simulator.get_infer_queueing_time()
+    result_SLO_time = simulator.get_SLO_time()
 
     return simulator.logs, result_jcts, simulator.gpu_util_dict, simulator.metric_dict, simulator.gpu_usage_dict,\
-           result_infer_queueing,simulator.schedule_cost,simulator.reclaim_events
+           result_infer_queueing,result_SLO_time,simulator.schedule_cost,simulator.reclaim_events
 
     #打印结果日志
 
@@ -1105,7 +1124,7 @@ if __name__ == "__main__":
     #输入args参数，待添加
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", type=str,
-                        default="Workload/large.csv")
+                        default="Workload/small.csv")
     parser.add_argument("--infer_policy", type=str, default="FirstFit",
                         choices=["FirstFit", "BestFit", "Cache", "Random"],
                         help="推理集群采用的策略")
@@ -1117,7 +1136,7 @@ if __name__ == "__main__":
                         help="训练集群固定调度周期")
     parser.add_argument("--preemptible", type=int, default=1,
                         help="是否强制回收")
-    parser.add_argument("--protect_time", type=int, default=30,
+    parser.add_argument("--protect_time", type=int, default=60,
                         help="GPU进入保护状态的时间")
     parser.add_argument("--cache_time", type=int, default=120,
                         help="缓存保留的时间")
@@ -1144,8 +1163,10 @@ if __name__ == "__main__":
     parser.add_argument("--protect_times", type=float, default=1.0,
                         help="1 means using Pollux to schedule Inference tasks")
 
-    parser.add_argument("--SLO_time", type=int,default=5,
-                        help="允许的最大排队时间")
+    # parser.add_argument("--SLO_time", type=int,default=5,
+    #                     help="允许的最大排队时间系数")
+    parser.add_argument("--SLO_rate", type=float, default=0.4,
+                        help="允许的最大排队时间系数")
 
     parser.add_argument("--log_file", type=int, default=0,
                         help="log out")
@@ -1154,7 +1175,7 @@ if __name__ == "__main__":
                         help="low utility threshold")
     parser.add_argument("--high-util", type=float,
                         help="high utility threshold")
-    parser.add_argument("--output", type=str, default="result/FirstFit-regular-large",
+    parser.add_argument("--output", type=str, default="result/test",
                         help="path to output logs")
     parser.add_argument("--gpu_output", type=str,
                         help="path to output gpu usage info")
@@ -1165,8 +1186,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     AFE = args.AFE
-
-    REPAIR_TRAIN = args.REPAIR_TRAIN
 
     ARYL = args.ARYL
     PROTECT_TIME = min(args.protect_times-15,0)
@@ -1205,9 +1224,10 @@ if __name__ == "__main__":
 
 
     summary = {"jcts": {}, "avgs_train": {}, "avgs_infer":{},"schedule_cost":{},"reclaim_events":{}}
-    inference_info={"queueing_time":{}, "avgs_time":{},"max_time":{},
+    inference_info={"queueing_time":{},"max_wait_time":{}, "avgs_time":{},"max_time":{},
                     "queue_tasks":{}, "queue_ratio":{}, "timeout_tasks":{}, "timeout_ratio":{}}
-    logs, jct_dict, gpu_util_dict, metric_dict, infer_usage, infer_queueing,schedule_cost,reclaim_events= simulate(args)#程序入口
+    logs, jct_dict, gpu_util_dict, metric_dict, infer_usage,\
+    infer_queueing,SLO_time,schedule_cost,reclaim_events= simulate(args)#程序入口
     #JCT相关
     summary["jcts"] = jct_dict
     summary["reclaim_events"] = reclaim_events
@@ -1231,10 +1251,11 @@ if __name__ == "__main__":
 
     #推理集群指标相关
     inference_info["queueing_time"]=infer_queueing
+    inference_info["max_wait_time"]=SLO_time
     inference_info["avgs_time"]=sum(inference_info["queueing_time"].values())/len(inference_info["queueing_time"])
     inference_info["max_time"] =max(inference_info["queueing_time"].values())
     num_queue=sum(1 for time in inference_info["queueing_time"].values() if time > 0)
-    num_over=sum(1 for time in inference_info["queueing_time"].values() if time > args.SLO_time)
+    num_over=sum(1 for job,time in inference_info["queueing_time"].items() if time > inference_info["max_wait_time"][job])
     inference_info["queue_tasks"] = num_queue
     inference_info["queue_ratio"]=num_queue / len(inference_info["queueing_time"]) if len(inference_info["queueing_time"])>0 else 0
     inference_info["timeout_tasks"] = num_over
@@ -1247,7 +1268,9 @@ if __name__ == "__main__":
     with open(args.output + "/inference.json", "w") as f:
         json.dump(inference_info, f, indent=4)
     #simulate()#程序入口
+    LOG.info("schedule over")
 
+# python main.py --workload Workload/middle.csv --infer_policy BestFit --min-nodes 16 --train_interval 60  --preemptible 1 --protect_time 30 --cache_time 30 --interference 0.2 --num-gpus 4 --ARYL 0 --realtime 1 --AFE 1 --infer_interval 8 --REPAIR_TRAIN 1 --protect_times 1.0 --SLO_rate 0.5 --log_file 0 --output result/testcmd
 
 
 
